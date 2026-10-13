@@ -33,7 +33,7 @@ e2e:
 e2e-reference:
     BRIDGE_IMPL=reference uv run --project python pytest -m e2e
 
-# Compile check for the Windows machine that runs Unity.
+# A Windows executable for the machine that runs Unity (needs `brew install mingw-w64`).
 build-windows:
     rustup target add x86_64-pc-windows-gnu
-    cargo check --target x86_64-pc-windows-gnu --lib
+    cargo build --release --target x86_64-pc-windows-gnu

@@ -40,3 +40,5 @@ ignore = ["PLR2004", "PLR0913", "PLR0917"]
 "tests/reference/run_reference.py" = ["PLC0415"]
 "tests/golden/generate_golden.py" = ["PLC0415"]
 "tests/**" = ["E501"]
+# A random file generator is branchy by nature.
+"tests/differential/*" = ["PLR0912", "PLR0915"]

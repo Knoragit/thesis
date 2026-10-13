@@ -18,6 +18,7 @@ fmt:
 
 # Unit and integration tests that need no MIDI hardware.
 test:
+    cargo build --bins
     cargo test
     uv run --project python pytest -m "not e2e and not live"
 

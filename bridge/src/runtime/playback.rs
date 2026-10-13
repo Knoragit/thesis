@@ -1,0 +1,278 @@
+//! Observer mode: plays a song on the piano and streams its notes to Unity.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use super::services::Services;
+use crate::core::{Input, PlaybackId};
+use crate::midi::Timeline;
+use crate::protocol::Event;
+
+const POLL: Duration = Duration::from_millis(1);
+
+/// The song currently playing, if any. At most one plays at a time.
+#[derive(Debug, Default)]
+pub struct PlaybackSlot {
+    current: Option<(Arc<AtomicBool>, JoinHandle<()>)>,
+}
+
+impl PlaybackSlot {
+    /// Replaces whatever is playing. The old song is fully wound down first (its "stop" output
+    /// is sent before the new song's first message), so two songs never overlap.
+    pub fn start(&mut self, id: PlaybackId, path: PathBuf, services: &Services) {
+        self.cancel();
+        if let Some((_, thread)) = self.current.take() {
+            let _ = thread.join();
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let (cancel, services) = (Arc::clone(&cancel), services.clone());
+            thread::spawn(move || {
+                play(&path, &cancel, &services);
+                services.wake(Input::PlaybackFinished(id));
+            })
+        };
+        self.current = Some((cancel, thread));
+    }
+
+    /// Asks the current song to stop; it ends within a millisecond or so.
+    pub fn cancel(&self) {
+        if let Some((cancel, _)) = &self.current {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Sleeps until `target`, waking often enough to notice a cancellation.
+/// Returns `false` if cancelled.
+fn wait_until(target: Instant, cancel: &AtomicBool) -> bool {
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        let remaining = target.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        thread::sleep(remaining.min(POLL));
+    }
+}
+
+fn play(path: &Path, cancel: &AtomicBool, services: &Services) {
+    let timeline = match Timeline::load(path) {
+        Ok(timeline) => timeline,
+        Err(error) => {
+            tracing::warn!(%error, file = %path.display(), "cannot play song");
+            services.unity.send(&Event::PlayError(
+                "Impossibile leggere il file del brano.".into(),
+            ));
+            return;
+        }
+    };
+    tracing::info!(file = %path.display(), "playing");
+
+    services.piano.all_notes_off();
+    services.unity.send(&Event::ClearScene);
+
+    // Each delay is added to a running target, so rounding never accumulates into drift.
+    let mut target = Instant::now();
+    for step in &timeline.steps {
+        target += Duration::from_secs_f64(step.delay);
+        if !wait_until(target, cancel) {
+            break;
+        }
+        if let Some(message) = &step.message {
+            services.piano.send(message);
+            if let Some(note) = message.note() {
+                services.unity.send_note(note);
+            }
+        }
+    }
+
+    services.piano.all_notes_off();
+    services.unity.send(&Event::ClearScene);
+    tracing::info!(file = %path.display(), "playback ended");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::UdpSocket;
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::midi::ports::{MidiOut, MidiSink};
+    use crate::midi::testing;
+    use crate::runtime::services::{Clock, UnitySender};
+
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<Vec<u8>>>>);
+
+    impl MidiSink for Recorder {
+        fn send(&mut self, bytes: &[u8]) {
+            self.0.lock().unwrap().push(bytes.to_vec());
+        }
+    }
+
+    const CLEAR_SCENE: &str = r#"{"action": "clear_scene"}"#;
+
+    struct Rig {
+        services: Services,
+        midi: Recorder,
+        unity: UdpSocket,
+        wakes: mpsc::Receiver<super::super::services::Wake>,
+        dir: tempfile::TempDir,
+    }
+
+    fn rig() -> Rig {
+        let unity = UdpSocket::bind("127.0.0.1:0").unwrap();
+        unity
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let midi = Recorder::default();
+        let (tx, wakes) = mpsc::channel();
+        let services = Services {
+            unity: UnitySender::new(unity.local_addr().unwrap()).unwrap(),
+            piano: MidiOut::from_sink("test", midi.clone()),
+            wakes: tx,
+            clock: Clock::start(),
+        };
+        Rig {
+            services,
+            midi,
+            unity,
+            wakes,
+            dir: tempfile::tempdir().unwrap(),
+        }
+    }
+
+    impl Rig {
+        fn song(&self, name: &str, notes: &[u8]) -> PathBuf {
+            let path = self.dir.path().join(name);
+            std::fs::write(&path, testing::melody(notes)).unwrap();
+            path
+        }
+
+        fn next_datagram(&self) -> String {
+            let mut buffer = [0u8; 2048];
+            let (len, _) = self.unity.recv_from(&mut buffer).unwrap();
+            String::from_utf8(buffer[..len].to_vec()).unwrap()
+        }
+    }
+
+    #[test]
+    fn a_song_is_played_and_reported_between_two_clear_scenes() {
+        let rig = rig();
+        let path = rig.song("a.mid", &[60]);
+        let mut slot = PlaybackSlot::default();
+        slot.start(7, path, &rig.services);
+
+        assert_eq!(rig.next_datagram(), CLEAR_SCENE);
+        assert!(rig.next_datagram().ends_with(r#""action": "press"}"#));
+        assert!(rig.next_datagram().ends_with(r#""action": "release"}"#));
+        assert_eq!(rig.next_datagram(), CLEAR_SCENE);
+
+        let wake = rig.wakes.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(wake.input, Input::PlaybackFinished(7)));
+        // Silence before and after, with the song in between.
+        let sent = rig.midi.0.lock().unwrap();
+        assert_eq!(sent.len(), 16 + 2 + 16);
+        assert_eq!(sent[16], [0x90, 60, 100]);
+    }
+
+    #[test]
+    fn cancelling_stops_quickly_and_still_silences_the_piano() {
+        let rig = rig();
+        let path = rig.song("long.mid", &[60; 40]); // 20 s
+        let mut slot = PlaybackSlot::default();
+        slot.start(1, path, &rig.services);
+        assert_eq!(rig.next_datagram(), CLEAR_SCENE);
+
+        let cancelled_at = Instant::now();
+        slot.cancel();
+        // Whatever was already on its way, the song ends with a second clear_scene.
+        while rig.next_datagram() != CLEAR_SCENE {}
+        assert!(cancelled_at.elapsed() < Duration::from_secs(1));
+        assert!(matches!(
+            rig.wakes
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .input,
+            Input::PlaybackFinished(1)
+        ));
+        let sent = rig.midi.0.lock().unwrap();
+        assert!(
+            sent[sent.len() - 16..]
+                .iter()
+                .all(|m| m[..] == [m[0], 123, 0] && m[0] & 0xf0 == 0xb0)
+        );
+    }
+
+    #[test]
+    fn starting_a_new_song_winds_the_old_one_down_first() {
+        let rig = rig();
+        let first = rig.song("a.mid", &[60; 40]);
+        let second = rig.song("b.mid", &[72]);
+        let mut slot = PlaybackSlot::default();
+        slot.start(1, first, &rig.services);
+        assert_eq!(rig.next_datagram(), CLEAR_SCENE);
+        slot.start(2, second, &rig.services);
+
+        // Read until the new song has finished (it ends with its own clear_scene).
+        let mut seen = Vec::new();
+        loop {
+            seen.push(rig.next_datagram());
+            if seen
+                .iter()
+                .any(|d| d.contains("\"note\": 72") && d.contains("release"))
+            {
+                break;
+            }
+        }
+        let first_new_note = seen
+            .iter()
+            .position(|d| d.contains("\"note\": 72"))
+            .unwrap();
+        assert!(
+            seen[first_new_note..]
+                .iter()
+                .all(|d| !d.contains("\"note\": 60")),
+            "the old song kept playing: {seen:?}"
+        );
+        let finished: Vec<_> = (0..2)
+            .map(|_| {
+                match rig
+                    .wakes
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap()
+                    .input
+                {
+                    Input::PlaybackFinished(id) => id,
+                    other => panic!("unexpected {other:?}"),
+                }
+            })
+            .collect();
+        assert_eq!(finished, [1, 2]);
+    }
+
+    #[test]
+    fn an_unreadable_song_is_reported_without_touching_the_piano() {
+        let rig = rig();
+        let path = rig.dir.path().join("bad.mid");
+        std::fs::write(&path, b"nope").unwrap();
+        let mut slot = PlaybackSlot::default();
+        slot.start(3, path, &rig.services);
+        assert!(rig.next_datagram().contains("play_result"));
+        assert!(matches!(
+            rig.wakes
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .input,
+            Input::PlaybackFinished(3)
+        ));
+        assert!(rig.midi.0.lock().unwrap().is_empty());
+    }
+}

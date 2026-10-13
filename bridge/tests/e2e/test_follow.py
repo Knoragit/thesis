@@ -71,6 +71,7 @@ def test_following_a_missing_file(make_bridge, profile):
     start = bridge.unity.mark()
     bridge.unity.send({"action": "play_song_follow", "filename": "ghost.mid"})
     traffic = bridge.unity.quiet(0.6)
+    assert bridge.unity.log(start) == traffic
     if profile.fixes("D2"):
         assert [d.action for d in traffic] == ["play_result"]
         assert traffic[0].msg["status"] == "error"
@@ -78,4 +79,3 @@ def test_following_a_missing_file(make_bridge, profile):
     else:
         # D2: the original keeps the previous song's sequence and sends its next chord.
         assert [d.raw for d in traffic] == [expect_notes(fx.CHORD_SEQUENCE[1])]
-    assert bridge.unity.log(start) == traffic

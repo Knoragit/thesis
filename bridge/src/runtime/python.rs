@@ -69,6 +69,8 @@ impl PythonTools {
         let Ok(mut command) = self.uv("sync") else {
             return;
         };
+        // Leave other packages alone: the same environment may also hold the development tools.
+        command.arg("--inexact");
         thread::spawn(move || match command.output() {
             Ok(output) if output.status.success() => tracing::info!("Python tools ready"),
             Ok(output) => tracing::warn!(
@@ -98,9 +100,16 @@ impl PythonTools {
         let mut command = self.uv("run")?;
         command.arg(tool).args(args);
         let mut child = command.spawn()?;
-        // A tool that exits early closes its stdin; that failure shows up in its exit status.
-        let _ = child.stdin.take().expect("stdin is piped").write_all(stdin);
+        // Written from another thread while this one drains stdout and stderr, so a large input
+        // cannot deadlock against a child blocked on full output pipes. A tool that exits early
+        // closes its stdin; that failure shows up in its exit status.
+        let mut pipe = child.stdin.take().expect("stdin is piped");
+        let input = stdin.to_vec();
+        let writer = thread::spawn(move || {
+            let _ = pipe.write_all(&input);
+        });
         let output = child.wait_with_output()?;
+        let _ = writer.join();
         if output.status.success() {
             Ok(output.stdout)
         } else {

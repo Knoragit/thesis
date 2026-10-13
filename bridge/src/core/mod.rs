@@ -1,12 +1,12 @@
-//! The bridge's brain, free of any I/O.
+//! The bridge's state machine, without I/O.
 //!
 //! [`Core::handle`] takes one [`Input`] (a command from Unity, a note from the keyboard, or the
-//! result of background work) and returns the [`Effect`]s the runtime must carry out. It never
-//! touches sockets, files or clocks: time comes in as an argument and the song library is
-//! reached through a trait. That keeps the whole behaviour testable with plain function calls.
+//! result of background work) and returns the [`Effect`]s for the runtime to carry out. Time is
+//! passed in as an argument and the song library is reached through a trait; the module uses no
+//! sockets, files, threads or clocks.
 //!
-//! What lives here is only what Unity cannot know: the follow-me chord cursor, the recorded
-//! takes for the report, and whether a song is playing. The app's own state machine stays in Unity.
+//! State: the follow-me chord cursor, the recorded notes for the report, and whether a song is
+//! playing.
 
 pub mod examples;
 pub mod follow;

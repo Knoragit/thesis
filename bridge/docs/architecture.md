@@ -1,12 +1,11 @@
-# midi-bridge: how it works
+# midi-bridge: architecture
 
-This document explains how the bridge is put together and what happens, step by step, in each of
-its jobs. The reasons behind the design are in [`design-decisions.md`](design-decisions.md).
+This document describes the components of the bridge and the sequence of operations for each
+feature. Design rationale: [`design-decisions.md`](design-decisions.md).
 
-## 1. The big picture
+## 1. Overview
 
-The bridge is a single process running next to the Unity app, on the same machine. It has four
-neighbours:
+The bridge is a single process on the same machine as the Unity app.
 
 ```
 ┌─────────────┐   commands · UDP :5006   ┌───────────────┐   notes · MIDI in    ┌───────────────┐
@@ -46,10 +45,10 @@ The bridge also owns a **data folder** on disk:
 The names in angle brackets are command-line options. Unity passes the real ones when it launches
 the bridge (see `midi-bridge --help`).
 
-## 2. Inside the bridge: one loop, one brain
+## 2. Event loop and core
 
-Everything that happens reaches a single **event loop**, which asks the **core** what to do and then
-does it:
+All inputs go through one channel to the **event loop**, which passes them to the **core** and
+executes the resulting effects:
 
 ```
   UDP receiver ──────┐
@@ -69,7 +68,7 @@ does it:
 | **Executor** | `runtime/mod.rs` | Turns each `Effect` into action: send a datagram, start or stop a worker |
 | **Workers** | `runtime/playback.rs`, `examples.rs`, `report.rs`, `search.rs` | Background threads for anything that takes time; they report back through the channel |
 
-The core is a function of its inputs:
+Core interface:
 
 ```rust
 core.handle(input: Input, now: f64, library: &dyn SongLibrary) -> Vec<Effect>
@@ -96,9 +95,9 @@ the piano through shared handles (`Services`: the Unity sender, the MIDI output,
 clock). They use the channel only to say they have finished. Only the core changes state, and only
 on the event loop's thread.
 
-## 3. The state the core keeps
+## 3. Core state
 
-`core::Core` holds four things:
+`core::Core` holds:
 
 - **`playback`**: which song (by playback id) is playing, if any.
 - **`follow`** (`core/follow.rs`): the chords of the song being followed, the cursor into them, the
@@ -110,7 +109,7 @@ on the event loop's thread.
 Notes are timestamped with the bridge's monotonic clock. Only differences between timestamps are
 used later.
 
-## 4. What happens, job by job
+## 4. Operations
 
 ### Start-up (`runtime::run`)
 
@@ -125,7 +124,7 @@ used later.
 Unity also pings every second until it sees `bridge_ready`, then every 5 seconds. Each ping is
 answered with `bridge_ready`.
 
-### A key is played
+### Keyboard input
 
 ```
 keyboard ──▶ callback ──▶ Note(press 60, vel 100) ──▶ core
@@ -155,8 +154,7 @@ sent earlier with `note_hand`, if there was one.
    - at the end (or when cancelled) silences the piano, sends `clear_scene`, and reports
      `PlaybackFinished(id)`.
 
-`stop_song` makes the core mark nothing as playing, end follow-me, cancel the player, and send
-`clear_scene` itself.
+`stop_song` clears the playback state, ends follow-me, cancels the player and sends `clear_scene`.
 
 ### Following a song ("Seguimi", `play_song_follow` / `next_step`)
 
@@ -198,8 +196,7 @@ search worker:
 core: register them under the query, send search_result for the first (or "not found")
 ```
 
-The search tool only fetches. Deciding which songs are usable is done by the bridge with its own MIDI
-code.
+The search tool only downloads; the bridge validates the files.
 
 ### Reports (`get_report_status`, `generate_report`)
 
@@ -220,7 +217,7 @@ core ◀──ReportFinished──
 
 Unity then loads `pagina_1.png … pagina_N.png` from the folder.
 
-## 5. The Rust–Python contract
+## 5. Rust–Python interface
 
 Both tools are console scripts of the `bridge-tools` package (`python/`), run as
 `uv run --project python --frozen --no-dev <tool> …`.
@@ -249,7 +246,7 @@ most 4, in parallel) into `DIR` and prints `[{"filename", "title", "artist"}, �
 The site addresses can be overridden with `MIDI_BRIDGE_FREEMIDI_URL` and `MIDI_BRIDGE_BITMIDI_URL`;
 the tests use this.
 
-## 6. Source map
+## 6. Source layout
 
 ```
 src/
@@ -283,7 +280,7 @@ python/src/bridge_tools/
 examples/dump_timeline.rs   prints how a .mid file is read (used by the differential tests)
 ```
 
-## 7. How it is tested
+## 7. Tests
 
 ```
                   ┌──────────── tests/e2e (pytest) ───────────┐

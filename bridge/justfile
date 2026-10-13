@@ -29,7 +29,7 @@ e2e:
     cargo build --bin midi-bridge
     BRIDGE_IMPL=rust uv run --project python pytest -m e2e
 
-# Same suite against the original Python bridge: proves the spec itself is valid.
+# Same suite against the original Python bridge.
 e2e-reference:
     BRIDGE_IMPL=reference uv run --project python pytest -m e2e
 

@@ -66,7 +66,7 @@ pub fn script(challenge: Challenge) -> Vec<Step> {
             note(F4, 0.55, 350, 100),
         ]
         .concat(),
-        // Staccato: two short notes with a wide gap, so they clearly do not overlap.
+        // Staccato: two short notes separated by a wide gap.
         Challenge::Staccato => [note(C4, 0.5, 180, 400), note(D4, 0.5, 150, 100)].concat(),
         // Legato: the E starts while the C is still held, with two distinct attacks.
         // This one cannot be interrupted.

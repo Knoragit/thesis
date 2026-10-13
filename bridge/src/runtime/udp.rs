@@ -12,8 +12,8 @@ pub fn bind(address: SocketAddr) -> std::io::Result<UdpSocket> {
     UdpSocket::bind(address)
 }
 
-/// Forwards every valid command to the event loop. A failed receive is logged and retried, like
-/// the original: the bridge must never stop listening while it is still running.
+/// Forwards every valid command to the event loop. A failed receive is logged and retried, as in
+/// the original.
 pub fn spawn_receiver(socket: UdpSocket, wakes: std::sync::mpsc::Sender<Wake>, clock: Clock) {
     thread::spawn(move || {
         let mut buffer = vec![0u8; 65_536];

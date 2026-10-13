@@ -1,4 +1,4 @@
-"""The Rust MIDI reader must see every file exactly as mido and the original bridge do."""
+"""Compares the Rust MIDI reader with mido and with the original bridge's analysis functions."""
 
 from __future__ import annotations
 

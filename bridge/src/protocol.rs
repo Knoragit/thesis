@@ -1,8 +1,7 @@
 //! The UDP wire protocol shared with the Unity app.
 //!
-//! Inbound datagrams are parsed leniently, the way the original bridge did: anything that is not
-//! a well-formed command is ignored rather than treated as an error. Outbound events are encoded
-//! byte-for-byte like Python's `json.dumps`, so the Unity side sees exactly what it always has.
+//! Inbound datagrams that are not well-formed commands are ignored, as in the original bridge.
+//! Outbound events are encoded byte-for-byte like Python's `json.dumps`.
 
 use std::io;
 

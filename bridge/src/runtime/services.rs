@@ -43,8 +43,8 @@ pub struct UnitySender {
 
 impl UnitySender {
     pub fn new(target: SocketAddr) -> std::io::Result<Self> {
-        // Unity is on this machine: a loopback socket also spares the Windows firewall prompt
-        // that binding to every interface can trigger.
+        // Loopback when Unity is local; binding to every interface can trigger a Windows
+        // firewall prompt.
         let local: SocketAddr = match (target.ip().is_loopback(), target.is_ipv4()) {
             (true, true) => (Ipv4Addr::LOCALHOST, 0).into(),
             (true, false) => (Ipv6Addr::LOCALHOST, 0).into(),

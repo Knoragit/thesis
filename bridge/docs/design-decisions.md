@@ -1,10 +1,5 @@
 # midi-bridge: design decisions
 
-This replaces the notes from the first porting attempt. That attempt was written against a stale
-copy of the Python bridge (it missed song search, the song library, the tutorial demos, hand
-tracking, report status and the heartbeat), so several of its decisions did not survive contact
-with the real protocol. What changed, and why, is listed in [section 9](#9-what-the-first-attempt-got-wrong).
-
 ## 1. What the bridge is
 
 A local process between the Unity app (headset) and a MIDI keyboard. Over loopback UDP it:
@@ -17,8 +12,7 @@ A local process between the Unity app (headset) and a MIDI keyboard. Over loopba
 6. keeps a song library (SQLite plus a folder of `.mid` files) and can fetch songs online;
 7. renders a PDF/PNG/WAV report of what was played.
 
-The reference behaviour is `PorgettoTesi/midi_bridge (1).py`. `midi_bridge.py` in the same folder
-is an obsolete copy.
+The reference behaviour is `PorgettoTesi/midi_bridge (1).py`.
 
 ## 2. Constraints
 
@@ -60,8 +54,7 @@ keyboard ─midir──▶ │ notes ──┼─▶ channel ─▶ event loop �
   `Input`s, and carries out the `Effect`s.
 - **Threads and channels, not async.** The I/O surface is one UDP socket, one MIDI callback,
   a few short-lived workers and subprocesses. `std::thread` and an `mpsc` channel into a single
-  owner loop are simpler than an async runtime, with no colouring and no shared mutable state
-  (the old plan's "shared state behind a mutex" was self-contradictory).
+  owner loop are simpler than an async runtime, with no colouring and no shared mutable state.
 - **Python for what Python is good at.** The report (matplotlib), the WAV synthesis (numpy), the
   analysis behind the report text, and web scraping. Rust owns MIDI, state, protocol, the
   library and the validation of downloaded songs. The two sides talk through subprocesses:
@@ -147,21 +140,7 @@ Three layers, all runnable on one Mac (`just test`, `just e2e`, `just e2e-refere
 An opt-in test (`pytest -m live`) checks that the real freemidi.org and bitmidi.com pages still match
 the scraping code.
 
-## 9. What the first attempt got wrong
-
-| Earlier decision | Verdict |
-|---|---|
-| Based on the stale `midi_bridge.py` | Reference is `midi_bridge (1).py`: 15 commands rather than 7, and a different set of events |
-| `tokio` | Not needed; threads and one channel |
-| "State behind a mutex, mutated only by the main loop" | Contradictory; one owner thread |
-| New `error` event, `note_off` without velocity | Rejected: breaks the frozen interface |
-| UUID-named files under a new data folder | Rejected: Unity reads `Sessione_*/pagina_N.png` and the user's library already exists |
-| "A global tempo map fixes per-track timing" | mido already merges tracks globally; the goal is to match mido, and a differential test proves it |
-| A layered `config.toml` | Command-line options only |
-| `build.rs` checking that `uv` is installed | A build script must not probe runtime tools; checked at start-up instead |
-| WAV synthesis in Rust | Stays in Python with numpy; porting DSP numerics buys nothing |
-
-## 10. Open items
+## 9. Open items
 
 - Windows is only compile-checked here. The first run on the lab PC should confirm port names and
   that `uv` is on `PATH`.

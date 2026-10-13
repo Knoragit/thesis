@@ -1,0 +1,36 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+default:
+    @just --list
+
+# Fast checks: formatting, lints, and the naming rule.
+lint:
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+    uv run --project python ruff check --config python/pyproject.toml python tests
+    uv run --project python ruff format --check --config python/pyproject.toml python tests
+    @! grep -rIil --exclude-dir=.git --exclude-dir=target --exclude-dir=.venv --exclude=uv.lock 'no[r]a' . \
+        || (echo "forbidden legacy name found (see above)"; exit 1)
+
+fmt:
+    cargo fmt
+    uv run --project python ruff format --config python/pyproject.toml python tests
+
+# Unit and integration tests that need no MIDI hardware.
+test:
+    cargo test
+    uv run --project python pytest -m "not e2e and not live"
+
+# Black-box suite against the Rust bridge (needs CoreMIDI virtual ports).
+e2e:
+    cargo build --bin midi-bridge
+    BRIDGE_IMPL=rust uv run --project python pytest -m e2e
+
+# Same suite against the original Python bridge: proves the spec itself is valid.
+e2e-reference:
+    BRIDGE_IMPL=reference uv run --project python pytest -m e2e
+
+# Compile check for the Windows machine that runs Unity.
+build-windows:
+    rustup target add x86_64-pc-windows-gnu
+    cargo check --target x86_64-pc-windows-gnu --lib

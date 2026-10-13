@@ -1,0 +1,25 @@
+[package]
+name = "midi-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "UDP <-> MIDI bridge between a Unity app and a physical/virtual MIDI keyboard"
+publish = false
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Pedantic lints that mostly add noise for this code base.
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"

@@ -1,0 +1,45 @@
+[project]
+name = "bridge-tools"
+version = "0.1.0"
+description = "Python helpers for midi-bridge: report rendering and online song search"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "matplotlib==3.11.2",
+    "numpy>=2.2",
+    "requests>=2.32",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "pytest>=8.4",
+    # Black-box test harness: virtual MIDI ports + the original bridge as reference.
+    "mido==1.3.3",
+    "python-rtmidi==1.5.8",
+    "pillow>=11",
+    "pypdf>=6",
+]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "bridge_tools"
+
+[tool.pytest.ini_options]
+testpaths = ["../tests"]
+markers = [
+    "live: hits real websites (opt in with `-m live`)",
+    "reference_only: scenario only meaningful for the original implementation",
+    "divergence(id): the implementations intentionally differ here (see docs/design-decisions.md)",
+]
+addopts = "-m 'not live' -ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "PL", "RUF"]
+ignore = ["PLR2004", "PLR0913"]

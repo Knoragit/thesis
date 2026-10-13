@@ -14,7 +14,8 @@ Design and the list of deliberate differences from the original: [`docs/design-d
 ## Requirements
 
 Rust (pinned in `rust-toolchain.toml`), [`uv`](https://docs.astral.sh/uv/), [`just`](https://just.systems).
-The end-to-end tests also need macOS (CoreMIDI virtual ports).
+The end-to-end tests also need macOS (CoreMIDI virtual ports). The bridge starts the Python tools
+with `uv`, so `uv` must be on the `PATH` of whoever launches it.
 
 ## Everyday commands
 
@@ -23,9 +24,10 @@ The end-to-end tests also need macOS (CoreMIDI virtual ports).
 | `just lint` | rustfmt, clippy, ruff, and the repository rules |
 | `just test` | unit, golden and differential tests (no MIDI hardware needed) |
 | `just e2e` | the black-box suite against this bridge |
-| `just e2e-reference` | the same suite against the original bridge |
+| `just e2e-reference` | the same suite against the original bridge (expects it at `../PorgettoTesi/midi_bridge (1).py`, or set `BRIDGE_REFERENCE_SCRIPT`) |
 | `just build-windows` | a Windows executable (cross-compiled) |
-| `pytest -m live` | checks the real freemidi.org / bitmidi.com pages still match the scraper |
+| `just live` | checks the real freemidi.org / bitmidi.com pages still match the scraper (needs internet) |
+| `just fmt` | formats the Rust and Python code |
 
 The end-to-end suites bind UDP ports 5005 and 5006: run one at a time, and not while Unity or
 another bridge is running.

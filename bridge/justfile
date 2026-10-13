@@ -33,6 +33,10 @@ e2e:
 e2e-reference:
     BRIDGE_IMPL=reference uv run --project python pytest -m e2e
 
+# Checks that the real freemidi.org and bitmidi.com pages still match the scraper (needs internet).
+live:
+    uv run --project python pytest -m live tests/search
+
 # A Windows executable for the machine that runs Unity (needs `brew install mingw-w64`).
 build-windows:
     rustup target add x86_64-pc-windows-gnu

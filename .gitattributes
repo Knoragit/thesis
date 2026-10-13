@@ -1,0 +1,3 @@
+# The bridge and the reference scripts keep LF line endings on every platform.
+/bridge/** text=auto eol=lf
+/reference/** text=auto eol=lf

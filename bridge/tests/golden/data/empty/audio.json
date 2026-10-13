@@ -1,0 +1,8 @@
+{
+ "channels": 1,
+ "sample_width": 2,
+ "rate": 44100,
+ "frames": 88200,
+ "peak": 27851,
+ "rms": 5280.802182755005
+}

@@ -27,19 +27,16 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "bridge_tools"
 
-[tool.pytest.ini_options]
-testpaths = ["../tests"]
-markers = [
-    "live: hits real websites (opt in with `-m live`)",
-    "reference_only: scenario only meaningful for the original implementation",
-    "divergence(id): the implementations intentionally differ here (see docs/design-decisions.md)",
-]
-addopts = "-m 'not live' -ra"
-
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "PL", "RUF"]
-ignore = ["PLR2004", "PLR0913"]
+ignore = ["PLR2004", "PLR0913", "PLR0917"]
+
+[tool.ruff.lint.per-file-ignores]
+# These two import lazily on purpose: they patch libraries before the original code runs.
+"tests/reference/run_reference.py" = ["PLC0415"]
+"tests/golden/generate_golden.py" = ["PLC0415"]
+"tests/**" = ["E501"]

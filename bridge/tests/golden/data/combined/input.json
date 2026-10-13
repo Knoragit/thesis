@@ -1,0 +1,421 @@
+{
+ "fai_tu_notes": [
+  {
+   "note": 55,
+   "vel": 0.395,
+   "start": 100.0,
+   "end": 100.2,
+   "hand": "left"
+  },
+  {
+   "note": 72,
+   "vel": 0.2643,
+   "start": 100.4,
+   "end": 100.75,
+   "hand": "right"
+  },
+  {
+   "note": 64,
+   "vel": 0.2185,
+   "start": 100.95,
+   "end": 102.05,
+   "hand": "left"
+  },
+  {
+   "note": 52,
+   "vel": 0.6817,
+   "start": 101.1,
+   "end": 101.3,
+   "hand": null
+  },
+  {
+   "note": 64,
+   "vel": 0.4086,
+   "start": 101.25,
+   "end": 101.85,
+   "hand": null
+  },
+  {
+   "note": 69,
+   "vel": 0.6661,
+   "start": 101.8,
+   "end": 101.88,
+   "hand": "right"
+  },
+  {
+   "note": 55,
+   "vel": 0.5431,
+   "start": 102.05,
+   "end": 102.4,
+   "hand": null
+  },
+  {
+   "note": 67,
+   "vel": 0.7506,
+   "start": 102.3,
+   "end": 102.9,
+   "hand": null
+  },
+  {
+   "note": 69,
+   "vel": 0.4425,
+   "start": 103.2,
+   "end": 103.4,
+   "hand": "left"
+  },
+  {
+   "note": 52,
+   "vel": 0.8011,
+   "start": 103.6,
+   "end": 103.95,
+   "hand": "right"
+  },
+  {
+   "note": 76,
+   "vel": 0.3368,
+   "start": 104.15,
+   "end": 104.5,
+   "hand": "right"
+  },
+  {
+   "note": 64,
+   "vel": 0.8039,
+   "start": 104.7,
+   "end": 104.9,
+   "hand": "right"
+  }
+ ],
+ "follow_sessions": [
+  {
+   "filename": "plain.mid",
+   "title": "plain",
+   "artist": "Artista Non Specificato",
+   "reference_notes": [
+    {
+     "note": 69,
+     "vel": 0.7174,
+     "start": 0.0,
+     "dur": 0.8
+    },
+    {
+     "note": 72,
+     "vel": 0.4075,
+     "start": 0.7,
+     "dur": 0.3
+    },
+    {
+     "note": 65,
+     "vel": 0.7149,
+     "start": 1.1,
+     "dur": 0.45
+    },
+    {
+     "note": 55,
+     "vel": 0.5538,
+     "start": 1.5,
+     "dur": 0.2
+    },
+    {
+     "note": 67,
+     "vel": 0.6934,
+     "start": 1.9,
+     "dur": 0.8
+    },
+    {
+     "note": 60,
+     "vel": 0.6868,
+     "start": 2.6,
+     "dur": 0.3
+    },
+    {
+     "note": 67,
+     "vel": 0.7073,
+     "start": 3.0,
+     "dur": 0.3
+    },
+    {
+     "note": 69,
+     "vel": 0.6114,
+     "start": 3.4,
+     "dur": 0.8
+    },
+    {
+     "note": 72,
+     "vel": 0.6128,
+     "start": 3.8,
+     "dur": 0.3
+    },
+    {
+     "note": 55,
+     "vel": 0.5091,
+     "start": 4.5,
+     "dur": 0.3
+    },
+    {
+     "note": 55,
+     "vel": 0.7641,
+     "start": 4.9,
+     "dur": 0.45
+    },
+    {
+     "note": 64,
+     "vel": 0.6421,
+     "start": 5.3,
+     "dur": 0.3
+    },
+    {
+     "note": 72,
+     "vel": 0.4609,
+     "start": 5.7,
+     "dur": 0.45
+    },
+    {
+     "note": 62,
+     "vel": 0.6863,
+     "start": 6.4,
+     "dur": 0.2
+    },
+    {
+     "note": 67,
+     "vel": 0.5553,
+     "start": 6.8,
+     "dur": 0.2
+    },
+    {
+     "note": 65,
+     "vel": 0.6687,
+     "start": 7.2,
+     "dur": 0.3
+    },
+    {
+     "note": 72,
+     "vel": 0.4127,
+     "start": 7.6,
+     "dur": 0.3
+    },
+    {
+     "note": 69,
+     "vel": 0.4994,
+     "start": 8.3,
+     "dur": 0.8
+    }
+   ],
+   "user_notes": [
+    {
+     "note": 69,
+     "vel": 0.7321,
+     "start": 399.9522,
+     "end": 400.7668
+    },
+    {
+     "note": 72,
+     "vel": 0.3499,
+     "start": 400.6939,
+     "end": 400.9069
+    },
+    {
+     "note": 65,
+     "vel": 0.8339,
+     "start": 401.0113,
+     "end": 401.5101
+    },
+    {
+     "note": 50,
+     "vel": 0.5,
+     "start": 401.3,
+     "end": 401.5
+    },
+    {
+     "note": 55,
+     "vel": 0.5297,
+     "start": 401.47,
+     "end": 401.7374
+    },
+    {
+     "note": 67,
+     "vel": 0.8303,
+     "start": 401.908,
+     "end": 402.9209
+    },
+    {
+     "note": 60,
+     "vel": 0.4813,
+     "start": 402.5358,
+     "end": 402.8685
+    },
+    {
+     "note": 67,
+     "vel": 0.7014,
+     "start": 403.1587,
+     "end": 403.5722
+    },
+    {
+     "note": 69,
+     "vel": 0.747,
+     "start": 403.5133,
+     "end": 404.0984
+    },
+    {
+     "note": 55,
+     "vel": 0.6797,
+     "start": 404.6882,
+     "end": 404.9412
+    },
+    {
+     "note": 55,
+     "vel": 0.6311,
+     "start": 405.0307,
+     "end": 405.433
+    },
+    {
+     "note": 64,
+     "vel": 0.7438,
+     "start": 405.435,
+     "end": 405.779
+    },
+    {
+     "note": 72,
+     "vel": 0.5208,
+     "start": 405.7244,
+     "end": 406.2088
+    },
+    {
+     "note": 62,
+     "vel": 0.6712,
+     "start": 406.2882,
+     "end": 406.5612
+    },
+    {
+     "note": 67,
+     "vel": 0.7779,
+     "start": 406.7985,
+     "end": 407.0405
+    },
+    {
+     "note": 65,
+     "vel": 0.4626,
+     "start": 407.0981,
+     "end": 407.3756
+    },
+    {
+     "note": 72,
+     "vel": 0.3,
+     "start": 407.6429,
+     "end": 408.0249
+    },
+    {
+     "note": 69,
+     "vel": 0.3445,
+     "start": 408.1946,
+     "end": 409.1204
+    }
+   ]
+  },
+  {
+   "filename": "Short Piece - Someone.mid",
+   "title": "Short Piece",
+   "artist": "Someone",
+   "reference_notes": [
+    {
+     "note": 62,
+     "vel": 0.7181,
+     "start": 0.0,
+     "dur": 0.45
+    },
+    {
+     "note": 60,
+     "vel": 0.4013,
+     "start": 0.7,
+     "dur": 0.2
+    },
+    {
+     "note": 64,
+     "vel": 0.6651,
+     "start": 1.1,
+     "dur": 0.45
+    },
+    {
+     "note": 72,
+     "vel": 0.5804,
+     "start": 1.5,
+     "dur": 0.3
+    },
+    {
+     "note": 65,
+     "vel": 0.7842,
+     "start": 1.9,
+     "dur": 0.8
+    },
+    {
+     "note": 69,
+     "vel": 0.6536,
+     "start": 2.6,
+     "dur": 0.45
+    },
+    {
+     "note": 69,
+     "vel": 0.6439,
+     "start": 3.0,
+     "dur": 0.3
+    },
+    {
+     "note": 69,
+     "vel": 0.7023,
+     "start": 3.4,
+     "dur": 0.2
+    },
+    {
+     "note": 72,
+     "vel": 0.7462,
+     "start": 3.8,
+     "dur": 0.45
+    },
+    {
+     "note": 60,
+     "vel": 0.4832,
+     "start": 4.5,
+     "dur": 0.45
+    },
+    {
+     "note": 72,
+     "vel": 0.7794,
+     "start": 4.9,
+     "dur": 0.2
+    },
+    {
+     "note": 67,
+     "vel": 0.6891,
+     "start": 5.3,
+     "dur": 0.2
+    }
+   ],
+   "user_notes": [
+    {
+     "note": 30,
+     "vel": 0.9,
+     "start": 800.0,
+     "end": 800.2
+    },
+    {
+     "note": 30,
+     "vel": 0.9,
+     "start": 801.0,
+     "end": 801.2
+    },
+    {
+     "note": 30,
+     "vel": 0.9,
+     "start": 802.0,
+     "end": 802.2
+    },
+    {
+     "note": 30,
+     "vel": 0.9,
+     "start": 803.0,
+     "end": 803.2
+    }
+   ]
+  }
+ ],
+ "version": 1
+}

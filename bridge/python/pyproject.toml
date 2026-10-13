@@ -9,6 +9,10 @@ dependencies = [
     "requests>=2.32",
 ]
 
+[project.scripts]
+report-renderer = "bridge_tools.report.cli:main"
+song-search = "bridge_tools.search.cli:main"
+
 [dependency-groups]
 dev = [
     "ruff>=0.14",
@@ -42,3 +46,6 @@ ignore = ["PLR2004", "PLR0913", "PLR0917"]
 "tests/**" = ["E501"]
 # A random file generator is branchy by nature.
 "tests/differential/*" = ["PLR0912", "PLR0915"]
+# Report text is user-facing prose, kept on one line per sentence.
+"python/src/bridge_tools/report/text.py" = ["E501"]
+"python/src/bridge_tools/report/pages.py" = ["E501"]

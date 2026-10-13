@@ -88,9 +88,14 @@ class RustProfile(Profile):
             "--midi-in", KEYBOARD_NAME,
             "--midi-out", SYNTH_NAME,
         ]  # fmt: skip
-        env = {**os.environ, "HOME": str(ctx.layout.home), "RUST_LOG": "debug"}
+        env = {
+            **os.environ,
+            "HOME": str(ctx.layout.home),
+            "RUST_LOG": os.environ.get("RUST_LOG", "debug"),
+        }
         if ctx.http_base:
-            env["MIDI_BRIDGE_HTTP_FIXTURE_BASE"] = ctx.http_base
+            env["MIDI_BRIDGE_FREEMIDI_URL"] = f"{ctx.http_base}/freemidi.org"
+            env["MIDI_BRIDGE_BITMIDI_URL"] = f"{ctx.http_base}/bitmidi.com"
         return _spawn(argv, env, ctx.log_path)
 
 

@@ -23,6 +23,8 @@ def status(bridge) -> bytes:
 
 
 def tap(bridge, note=60, hold=0.06):
+    # Commands (UDP) and notes (MIDI) travel independently: let the last command take effect.
+    time.sleep(0.1)
     bridge.keyboard.tap(note, 100, hold)
     time.sleep(0.1)
 
@@ -60,6 +62,7 @@ def test_notes_are_only_recorded_while_fai_tu_is_running(make_bridge):
 def test_a_note_still_held_is_not_material_until_released(make_bridge):
     bridge = make_bridge(SONGS)
     bridge.unity.send({"action": "start_fai_tu"})
+    time.sleep(0.1)
     bridge.keyboard.press(60)
     time.sleep(0.1)
     assert status(bridge) == NO_MATERIAL
@@ -71,6 +74,7 @@ def test_a_note_still_held_is_not_material_until_released(make_bridge):
 def test_release_without_press_is_ignored(make_bridge):
     bridge = make_bridge(SONGS)
     bridge.unity.send({"action": "start_fai_tu"})
+    time.sleep(0.1)
     bridge.keyboard.release(60)
     time.sleep(0.1)
     assert status(bridge) == NO_MATERIAL

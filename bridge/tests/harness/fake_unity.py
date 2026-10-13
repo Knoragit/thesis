@@ -39,7 +39,6 @@ class FakeUnity:
         self._rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._rx.bind((HOST, UNITY_PORT))
         self._rx.settimeout(0.1)
-        self._tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._log: list[Datagram] = []
         self._cond = threading.Condition()
         self._stop = threading.Event()
@@ -62,13 +61,15 @@ class FakeUnity:
         self._stop.set()
         self._thread.join(timeout=2)
         self._rx.close()
-        self._tx.close()
 
     # -- sending ---------------------------------------------------------------------------
 
     def send(self, command: dict[str, Any] | bytes) -> None:
         raw = command if isinstance(command, bytes) else json.dumps(command).encode()
-        self._tx.sendto(raw, (HOST, BRIDGE_PORT))
+        # A new socket per datagram, like UdpReceiver.InviaJsonAPython. A reused socket can raise
+        # ConnectionRefusedError for a ping that reached no listener before the bridge started.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as tx:
+            tx.sendto(raw, (HOST, BRIDGE_PORT))
 
     # -- observing -------------------------------------------------------------------------
 

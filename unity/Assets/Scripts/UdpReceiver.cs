@@ -20,13 +20,13 @@ public class UdpReceiver : MonoBehaviour
     public int port = 5005;
     private bool isRunning = true;
 
-    [Header("Configurazione Python")]
-    [Tooltip("Nome del comando python o percorso dell'eseguibile (es. python o python3)")]
-    public string pythonPath = "python";
-    [Tooltip("Percorso assoluto o relativo dello script python (es. C:/Users/vrlab/Desktop/Nora/midi_bridge (1).py)")]
-    public string scriptPath = "C:/Users/vrlab/Desktop/Nora/midi_bridge (1).py";
+    [Header("Configurazione bridge")]
+    [Tooltip("Percorso dell'eseguibile del bridge: assoluto, oppure relativo alla cartella del progetto Unity")]
+    public string bridgeExecutable = "../bridge/target/release/midi-bridge.exe";
+    [Tooltip("Argomenti da passare al bridge: cartella dati, nome del database, ecc. (midi-bridge --help)")]
+    public string bridgeArguments = "--data-dir \"C:/Users/vrlab/Desktop/Nora\" --db-file nora_database.db --report-name Report_Completo_Nora.pdf --songs-subdir Canzoni --sessions-subdir Sessioni";
 
-    private Process pythonProcess;
+    private Process bridgeProcess;
 
     // True quando il bridge ha confermato di essere in ascolto ("bridge_ready").
     // Prima di questo segnale i comandi inviati vengono scartati dal sistema:
@@ -45,7 +45,7 @@ public class UdpReceiver : MonoBehaviour
 
     void Awake()
     {
-        AvviaScriptPython();
+        AvviaBridge();
     }
 
     void Start()
@@ -104,24 +104,27 @@ public class UdpReceiver : MonoBehaviour
         avvisoComandoPrimaProntoInviato = false;
     }
 
-    private void AvviaScriptPython()
+    private void AvviaBridge()
     {
+        // Un percorso relativo parte dalla cartella del progetto (quella che contiene Assets/).
+        string cartellaProgetto = System.IO.Path.GetDirectoryName(Application.dataPath);
+        string eseguibile = System.IO.Path.GetFullPath(System.IO.Path.Combine(cartellaProgetto, bridgeExecutable));
         try
         {
             ProcessStartInfo startInfo = new ProcessStartInfo
             {
-                FileName = pythonPath,
-                Arguments = $"\"{scriptPath}\"",
+                FileName = eseguibile,
+                Arguments = bridgeArguments,
                 UseShellExecute = true, // Lascia a true per vedere la finestra del terminale con i log
                 CreateNoWindow = false
             };
 
-            pythonProcess = Process.Start(startInfo);
-            UnityEngine.Debug.Log("<color=cyan>[UDP]</color> Script Python avviato automaticamente.");
+            bridgeProcess = Process.Start(startInfo);
+            UnityEngine.Debug.Log("<color=cyan>[UDP]</color> Bridge avviato automaticamente.");
         }
         catch (System.Exception e)
         {
-            UnityEngine.Debug.LogError($"[UDP ERRORE] Impossibile avviare Python: {e.Message}");
+            UnityEngine.Debug.LogError($"[UDP ERRORE] Impossibile avviare il bridge ({eseguibile}): {e.Message}");
         }
     }
 
@@ -487,7 +490,7 @@ public class UdpReceiver : MonoBehaviour
 
     private bool terminata = false;
 
-    private void TerminaScriptPython()
+    private void TerminaBridge()
     {
         if (terminata) return;
         terminata = true;
@@ -527,19 +530,19 @@ public class UdpReceiver : MonoBehaviour
             UnityEngine.Debug.LogWarning($"[UDP] Join thread: {e.Message}");
         }
 
-        // 3. Termina il processo Python e tutto il suo albero (evita processi orfani).
-        if (pythonProcess != null)
+        // 3. Termina il processo del bridge e tutto il suo albero (evita processi orfani).
+        if (bridgeProcess != null)
         {
             try
             {
-                if (!pythonProcess.HasExited)
+                if (!bridgeProcess.HasExited)
                 {
                     try
                     {
                         using (Process killer = new Process())
                         {
                             killer.StartInfo.FileName = "taskkill";
-                            killer.StartInfo.Arguments = $"/PID {pythonProcess.Id} /T /F";
+                            killer.StartInfo.Arguments = $"/PID {bridgeProcess.Id} /T /F";
                             killer.StartInfo.CreateNoWindow = true;
                             killer.StartInfo.UseShellExecute = false;
                             killer.Start();
@@ -547,26 +550,26 @@ public class UdpReceiver : MonoBehaviour
                         }
                     }
                     catch { }
-                    try { pythonProcess.Kill(); } catch { }
+                    try { bridgeProcess.Kill(); } catch { }
                 }
-                pythonProcess.Dispose();
+                bridgeProcess.Dispose();
             }
             catch { }
-            pythonProcess = null;
-            UnityEngine.Debug.Log("<color=cyan>[UDP]</color> Processo Python terminato.");
+            bridgeProcess = null;
+            UnityEngine.Debug.Log("<color=cyan>[UDP]</color> Processo del bridge terminato.");
         }
     }
 
     void OnApplicationQuit()
     {
-        TerminaScriptPython();
+        TerminaBridge();
     }
 
     // Rete di sicurezza: OnDestroy viene chiamato anche su exit bruschi del Play
     // e su domain reload, quando OnApplicationQuit potrebbe non scattare.
     void OnDestroy()
     {
-        TerminaScriptPython();
+        TerminaBridge();
     }
 
     [System.Serializable]

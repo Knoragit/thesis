@@ -51,6 +51,11 @@ fn download(
 
 /// Moves a downloaded song into the library if it has a piano part and suits the visualizer.
 fn keep_if_playable(candidate: Candidate, scratch: &Path, songs_dir: &Path) -> Option<SongRecord> {
+    // The name comes from another program: only a bare file name may touch the songs folder.
+    if Path::new(&candidate.filename).file_name() != Some(candidate.filename.as_ref()) {
+        tracing::warn!(file = %candidate.filename, "discarding download with a suspicious name");
+        return None;
+    }
     let downloaded: PathBuf = scratch.join(&candidate.filename);
     let timeline = match Timeline::load(&downloaded) {
         Ok(timeline) => timeline,
@@ -76,4 +81,73 @@ fn keep_if_playable(candidate: Candidate, scratch: &Path, songs_dir: &Path) -> O
         title: candidate.title,
         artist: candidate.artist,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::midi::testing;
+
+    fn candidate(name: &str) -> Candidate {
+        Candidate {
+            filename: name.to_owned(),
+            title: Some("T".into()),
+            artist: None,
+        }
+    }
+
+    struct Dirs {
+        _root: tempfile::TempDir,
+        scratch: PathBuf,
+        songs: PathBuf,
+    }
+
+    fn dirs() -> Dirs {
+        let root = tempfile::tempdir().unwrap();
+        let (scratch, songs) = (root.path().join("scratch"), root.path().join("songs"));
+        std::fs::create_dir(&scratch).unwrap();
+        std::fs::create_dir(&songs).unwrap();
+        Dirs {
+            _root: root,
+            scratch,
+            songs,
+        }
+    }
+
+    #[test]
+    fn a_playable_piano_song_is_moved_into_the_library() {
+        let d = dirs();
+        std::fs::write(d.scratch.join("ok.mid"), testing::melody(&[60])).unwrap();
+        let kept = keep_if_playable(candidate("ok.mid"), &d.scratch, &d.songs).unwrap();
+        assert_eq!(kept.filename, "ok.mid");
+        assert!(d.songs.join("ok.mid").is_file());
+        assert!(!d.scratch.join("ok.mid").exists());
+    }
+
+    #[test]
+    fn unusable_downloads_stay_out_of_the_library() {
+        let d = dirs();
+        std::fs::write(d.scratch.join("violin.mid"), testing::with_program(40, 60)).unwrap();
+        std::fs::write(d.scratch.join("hammer.mid"), testing::hammer()).unwrap();
+        std::fs::write(d.scratch.join("junk.mid"), b"<html>").unwrap();
+        for name in ["violin.mid", "hammer.mid", "junk.mid", "missing.mid"] {
+            assert!(
+                keep_if_playable(candidate(name), &d.scratch, &d.songs).is_none(),
+                "{name}"
+            );
+        }
+        assert_eq!(std::fs::read_dir(&d.songs).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn names_with_path_components_are_refused() {
+        let d = dirs();
+        std::fs::write(d.scratch.join("ok.mid"), testing::melody(&[60])).unwrap();
+        for name in ["../ok.mid", "sub/ok.mid", "", ".."] {
+            assert!(
+                keep_if_playable(candidate(name), &d.scratch, &d.songs).is_none(),
+                "{name:?}"
+            );
+        }
+    }
 }

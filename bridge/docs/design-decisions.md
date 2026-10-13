@@ -25,15 +25,26 @@ The reference behaviour is `PorgettoTesi/midi_bridge (1).py`.
 ## 3. Architecture
 
 ```
-Unity ──UDP 5006──▶ ┌──────────────────────────── midi-bridge (Rust) ───────────────────────────┐
-      ◀─UDP 5005── │ udp rx ─┐                                                                   │
-keyboard ─midir──▶ │ notes ──┼─▶ channel ─▶ event loop ─▶ core::Core::handle(Input) ─▶ Effects  │
-                    │ workers ┘                    │                                  │          │
-                    │ (playback, demos,            └──────── executor ◀───────────────┘          │
-                    │  report, search)                                                           │
-                    └──────────────────────┬────────────────────────────────────────────────────┘
-                                           │ `uv run` subprocesses (JSON in / JSON out)
-                              report-renderer · song-search   (Python, matplotlib / requests)
+┌─────────────┐   commands · UDP :5006   ┌───────────────┐   notes · MIDI in    ┌───────────────┐
+│    Unity    │ ───────────────────────▶ │               │ ◀─────────────────── │               │
+│  (headset)  │                          │  midi-bridge  │                      │ MIDI keyboard │
+│             │ ◀─────────────────────── │    (Rust)     │ ───────────────────▶ │   and piano   │
+└─────────────┘   events · UDP :5005     └───────┬───────┘   songs · MIDI out   └───────────────┘
+                                                 │
+                                                 │ `uv run`: JSON in, JSON out
+                                                 ▼
+                                    ┌─────────────────────────┐
+                                    │  report-renderer        │
+                                    │  song-search   (Python) │
+                                    └─────────────────────────┘
+```
+
+Inside the bridge, everything funnels into one loop:
+
+```
+commands, keyboard notes, worker results ──▶ channel ──▶ event loop ──▶ Core::handle(input) ──▶ effects
+                                                                                                  │
+                          events to Unity · MIDI to the piano · start workers  ◀──────────────────┘
 ```
 
 - **One Cargo package** (library + thin binary), not a workspace. There is a single deliverable and

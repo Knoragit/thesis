@@ -14,7 +14,7 @@ import pytest
 from golden.generate_golden import load_original
 from harness.legacy_layout import REPO_ROOT
 
-DUMP = REPO_ROOT / "target" / "debug" / "dump_timeline"
+DUMP = REPO_ROOT / "target" / "debug" / "examples" / "dump_timeline"
 FILES_PER_SEED = 6
 
 

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
-use crate::midi::{Timeline, analysis};
+use crate::midi::analysis::{self, ReferenceNote};
+use crate::midi::{Timeline, TimelineError};
 use crate::protocol::SongEntry;
 
 const UNKNOWN_ARTIST: &str = "Artista Non Specificato";
@@ -21,6 +22,8 @@ pub enum LibraryError {
     Database(#[from] rusqlite::Error),
     #[error("cannot read songs folder: {0}")]
     Io(#[from] std::io::Error),
+    #[error("cannot read song: {0}")]
+    Song(#[from] TimelineError),
 }
 
 /// A song as stored in the database.
@@ -42,7 +45,10 @@ pub trait SongLibrary {
     fn cached_search(&self, query: &str) -> Result<Option<SongRecord>, LibraryError>;
     /// Adds a song unless its file is already known.
     fn register(&self, query: &str, song: &SongRecord) -> Result<(), LibraryError>;
-    fn song_path(&self, filename: &str) -> PathBuf;
+    /// The path of a song's file, if the file exists.
+    fn song_file(&self, filename: &str) -> Option<PathBuf>;
+    /// The notes of a song, as played by the original performer.
+    fn reference_notes(&self, filename: &str) -> Result<Vec<ReferenceNote>, LibraryError>;
 }
 
 #[derive(Debug)]
@@ -59,6 +65,10 @@ const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS midi_files (
     artist TEXT)";
 
 impl Library {
+    fn song_path(&self, filename: &str) -> PathBuf {
+        self.songs_dir.join(filename)
+    }
+
     pub fn open(db_path: &Path, songs_dir: &Path) -> Result<Self, LibraryError> {
         let connection = Connection::open(db_path)?;
         let library = Self {
@@ -214,7 +224,7 @@ impl SongLibrary for Library {
                 },
             )
             .optional()?;
-        Ok(record.filter(|song| self.song_path(&song.filename).exists()))
+        Ok(record.filter(|song| self.song_file(&song.filename).is_some()))
     }
 
     fn register(&self, query: &str, song: &SongRecord) -> Result<(), LibraryError> {
@@ -227,8 +237,14 @@ impl SongLibrary for Library {
         Ok(())
     }
 
-    fn song_path(&self, filename: &str) -> PathBuf {
-        self.songs_dir.join(filename)
+    fn song_file(&self, filename: &str) -> Option<PathBuf> {
+        Some(self.song_path(filename)).filter(|path| path.is_file())
+    }
+
+    fn reference_notes(&self, filename: &str) -> Result<Vec<ReferenceNote>, LibraryError> {
+        Ok(analysis::reference_notes(&Timeline::load(
+            &self.song_path(filename),
+        )?))
     }
 }
 

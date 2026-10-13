@@ -3,10 +3,12 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use serde::Serialize;
+
 use super::{Message, NoteKind, Timeline};
 
 /// A note of the song as played by the original performer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ReferenceNote {
     pub note: u8,
     /// Velocity as 0.0 to 1.0.

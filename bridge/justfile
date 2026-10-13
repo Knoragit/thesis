@@ -9,6 +9,8 @@ lint:
     cargo clippy --all-targets -- -D warnings
     uv run --project python ruff check --config python/pyproject.toml python tests
     uv run --project python ruff format --check --config python/pyproject.toml python tests
+    @! grep -rnE 'std::(fs|net|thread|process)|time::(Instant|SystemTime)|midir|rusqlite' src/core --include=*.rs --exclude=tests.rs \
+        || (echo "src/core must stay free of I/O (see above)"; exit 1)
     @! grep -rIlE --exclude-dir=.git --exclude-dir=target --exclude-dir=.venv --exclude=uv.lock '(^|[^A-Za-z])([N]ora|[n]ora|NOR[A])' . \
         || (echo "forbidden legacy name found (see above)"; exit 1)
 

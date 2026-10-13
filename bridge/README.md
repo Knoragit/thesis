@@ -9,7 +9,8 @@ follows songs, records free play, fetches songs online and produces PDF reports.
 - **Tests** (`tests/`): a black-box suite that runs unchanged against this bridge and against
   the original Python implementation, plus golden and differential tests.
 
-Design and the list of deliberate differences from the original: [`docs/design-decisions.md`](docs/design-decisions.md).
+How it works: [`docs/architecture.md`](docs/architecture.md). Why it is built this way, and the
+deliberate differences from the original: [`docs/design-decisions.md`](docs/design-decisions.md).
 
 ## Requirements
 

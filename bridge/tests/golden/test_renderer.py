@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import wave
@@ -98,3 +99,18 @@ def test_bad_input_fails_with_a_message(tmp_path):
     )
     assert result.returncode != 0
     assert "unsupported session data version" in result.stderr
+
+
+def test_non_ascii_titles_survive_a_windows_codepage(tmp_path):
+    data = json.loads((DATA / "follow_one" / "input.json").read_text())
+    data["follow_sessions"][0]["title"] = "Für Elise"
+    result = subprocess.run(
+        [sys.executable, "-m", "bridge_tools.report.cli", "--out-dir", str(tmp_path)],
+        input=json.dumps(data, ensure_ascii=False).encode(),
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},  # what a pipe gets on Windows
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    text = PdfReader(tmp_path / "report.pdf").pages[1].extract_text()
+    assert "Für Elise" in text

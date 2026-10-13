@@ -19,7 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pdf-name", default="report.pdf")
     args = parser.parse_args(argv)
 
-    data = parse_session(json.load(sys.stdin))
+    # Bytes, not text: the bridge sends UTF-8, while text stdin uses the locale's codepage
+    # (cp1252 on Windows) and would garble non-ASCII song titles.
+    data = parse_session(json.loads(sys.stdin.buffer.read()))
     pages = render_report(data, args.out_dir, args.pdf_name)
     print(json.dumps({"pages": pages}))
     return 0

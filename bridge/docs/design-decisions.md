@@ -71,8 +71,9 @@ commands, keyboard notes, worker results ──▶ channel ──▶ event loop 
   library and the validation of downloaded songs. The two sides talk through subprocesses:
   JSON on stdin and stdout, files in a folder, no long-lived state, nothing blocking the
   event loop.
-- **`uv`** manages the Python side. The bridge runs `uv sync --frozen --no-dev` in the background
-  at start-up, so the first report does not wait for an install.
+- **`uv`** manages the Python side. The bridge runs `uv sync --frozen --no-dev --inexact` in the
+  background at start-up, so the first report does not wait for an install (`--inexact` leaves
+  the development tools alone when the same environment is used for testing).
 
 ## 4. What state the bridge keeps
 

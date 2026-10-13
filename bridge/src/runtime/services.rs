@@ -1,6 +1,6 @@
 //! Handles shared by the event loop and the worker threads.
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
@@ -43,10 +43,13 @@ pub struct UnitySender {
 
 impl UnitySender {
     pub fn new(target: SocketAddr) -> std::io::Result<Self> {
-        let local = if target.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
+        // Unity is on this machine: a loopback socket also spares the Windows firewall prompt
+        // that binding to every interface can trigger.
+        let local: SocketAddr = match (target.ip().is_loopback(), target.is_ipv4()) {
+            (true, true) => (Ipv4Addr::LOCALHOST, 0).into(),
+            (true, false) => (Ipv6Addr::LOCALHOST, 0).into(),
+            (false, true) => (Ipv4Addr::UNSPECIFIED, 0).into(),
+            (false, false) => (Ipv6Addr::UNSPECIFIED, 0).into(),
         };
         Ok(Self {
             socket: Arc::new(UdpSocket::bind(local)?),

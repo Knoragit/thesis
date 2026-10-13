@@ -8,17 +8,26 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+BUNDLED_FONTS = REPO_ROOT / "python" / "src" / "bridge_tools" / "report" / "assets" / "fonts"
 
 
 def reference_script() -> Path:
     override = os.environ.get("BRIDGE_REFERENCE_SCRIPT")
     if override:
         return Path(override)
-    return REPO_ROOT.parent / "PorgettoTesi" / "midi_bridge (1).py"
+    return REPO_ROOT.parent / "reference" / "midi_bridge.py"
+
+
+def install_reference_fonts(fonts_dir: Path) -> None:
+    """Puts the report font where the original looks for it (the new bridge bundles it)."""
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    for font in BUNDLED_FONTS.glob("*.ttf"):
+        shutil.copy2(font, fonts_dir / font.name)
 
 
 @dataclass(frozen=True)

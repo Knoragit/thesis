@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import signal
 import subprocess
 import time
@@ -11,7 +10,7 @@ from pathlib import Path
 import pytest
 from harness.fake_unity import FakeUnity
 from harness.http_fixtures import FixtureSite, start_fixture_server
-from harness.legacy_layout import Layout, read_legacy_names
+from harness.legacy_layout import Layout, install_reference_fonts, read_legacy_names
 from harness.midi_io import VirtualKeyboard, VirtualSynth
 from harness.profiles import LaunchContext, Profile, selected_profile
 
@@ -131,10 +130,7 @@ def make_bridge(
         for name, data in (songs or {}).items():
             (layout.songs_dir / name).write_bytes(data)
         if fonts:
-            # The original looks for its font next to its data; the new bridge bundles it.
-            source = Path(__file__).resolve().parents[2] / "PorgettoTesi" / "Raleway" / "static"
-            if source.is_dir():
-                shutil.copytree(source, layout.fonts_dir)
+            install_reference_fonts(layout.fonts_dir)
         bridge = RunningBridge(
             profile, layout, FakeUnity(), keyboard, synth, http_site, tmp_path / "bridge"
         )

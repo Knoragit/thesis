@@ -2,7 +2,7 @@
 
 How the bridge works is described in [`architecture.md`](architecture.md). This document lists the
 decisions behind it and the intended differences from the original implementation
-(`PorgettoTesi/midi_bridge (1).py`).
+([`reference/midi_bridge.py`](../../reference/midi_bridge.py)).
 
 ## 1. Constraints
 
@@ -76,5 +76,3 @@ The end-to-end scenarios were written against the original first.
 
 - The Windows build is compiled and linked, but has not been run on the lab PC. The first run should
   check the MIDI port names and that `uv` is on `PATH`.
-- The Unity changes (`UdpReceiver.cs` and `SampleScene.unity`) are not committed in the Unity
-  repository.

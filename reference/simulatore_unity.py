@@ -16,7 +16,7 @@ PORT_FROM_PYTHON = 5005 # Porta dove il bridge trasmette i dati
 
 # Percorso dello script bridge: il simulatore puo' avviarlo da solo, come fa Unity
 # (vedi UdpReceiver.AvviaScriptPython), oppure usare un bridge gia' in esecuzione.
-BRIDGE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "midi_bridge (1).py")
+BRIDGE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "midi_bridge.py")
 
 sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -434,7 +434,7 @@ def ascolta_backend():
 
 
 def avvia_bridge_python():
-    """Replica AvviaScriptPython di UdpReceiver: apre 'midi_bridge (1).py'
+    """Replica AvviaScriptPython di UdpReceiver: apre 'midi_bridge.py'
     in una nuova finestra console."""
     global processo_bridge
     if not os.path.exists(BRIDGE_SCRIPT):

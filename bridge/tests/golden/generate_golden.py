@@ -23,7 +23,7 @@ from pypdf import PdfReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harness.legacy_layout import read_legacy_names, reference_script
+from harness.legacy_layout import install_reference_fonts, read_legacy_names, reference_script
 
 from golden.cases import build_cases
 
@@ -50,8 +50,7 @@ def run_case(name: str, case: dict) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         home = Path(tmp)
         data_dir = home / "Desktop" / names.data_dir
-        fonts = data_dir.joinpath(*names.font_dir)
-        shutil.copytree(reference_script().parent / "Raleway" / "static", fonts)
+        install_reference_fonts(data_dir.joinpath(*names.font_dir))
         bridge = load_original(home)
 
         bridge.recorded_notes_fai_tu = [dict(n) for n in case["fai_tu_notes"]]

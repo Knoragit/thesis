@@ -28,7 +28,7 @@ with `uv`, so `uv` must be on the `PATH` of whoever launches it.
 | `just lint` | rustfmt, clippy, ruff, and the repository rules |
 | `just test` | unit, golden and differential tests (no MIDI hardware needed) |
 | `just e2e` | the black-box suite against this bridge |
-| `just e2e-reference` | the same suite against the original bridge (expects it at `../PorgettoTesi/midi_bridge (1).py`, or set `BRIDGE_REFERENCE_SCRIPT`) |
+| `just e2e-reference` | the same suite against the original bridge (`../reference/midi_bridge.py`, or set `BRIDGE_REFERENCE_SCRIPT`) |
 | `just build-windows` | a Windows executable (cross-compiled; needs `brew install mingw-w64`) |
 | `just live` | checks the real freemidi.org / bitmidi.com pages still match the scraper (needs internet) |
 | `just fmt` | formats the Rust and Python code |

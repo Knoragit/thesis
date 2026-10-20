@@ -85,6 +85,16 @@ public class GameManager : MonoBehaviour
     // quando non servono (Indietro sulla prima pagina, Avanti sull'ultima).
     private Button bottoneIndietroReport;
     private Button bottoneAvantiReport;
+    // Zoom della pagina: la RawImage e' il content di uno ScrollRect, cosi' quando
+    // e' piu' grande dell'area visibile compaiono le barre a destra e sotto.
+    private ScrollRect scrollReport;
+    private Button bottoneZoomPiuReport;
+    private Button bottoneZoomMenoReport;
+    private float zoomReport = 1f;
+    private const float ZOOM_REPORT_MIN = 1f;
+    private const float ZOOM_REPORT_MAX = 3f;
+    private const float ZOOM_REPORT_PASSO = 0.5f;
+    private static readonly Vector2 DimensionePaginaReport = new Vector2(600f, 777f);
 
     // "Genera Report" vive ora nel menu (spostato a runtime da GruppoFaiTu) e resta
     // spento finche' il bridge non confirma che c'e' materiale (note Fai Tu o
@@ -1120,7 +1130,8 @@ public class GameManager : MonoBehaviour
         srt.anchorMax = new Vector2(0.5f, 0.5f);
         srt.pivot = new Vector2(0.5f, 0.5f);
         srt.anchoredPosition = Vector2.zero;
-        srt.sizeDelta = new Vector2(700f, 980f);
+        // Piu' largo della pagina (600) per ospitare i bottoni + e - a destra.
+        srt.sizeDelta = new Vector2(840f, 980f);
 
         Image img = sfondo.GetComponent<Image>();
         img.color = SteelBlue;
@@ -1137,19 +1148,61 @@ public class GameManager : MonoBehaviour
         // rapporto (600 x ~777) e niente AspectRatioFitter, perche' con FitInParent
         // su parent a tutto canvas la pagina si estendeva su tutto lo schermo e
         // copriva i pulsanti. La pagina resta a meta'-alta, con i pulsanti sotto.
+        // L'area della pagina e' uno ScrollRect: a zoom 1 la pagina coincide con
+        // l'area, ingrandita si trascina o si scorre con le barre.
+        GameObject goScroll = new GameObject("ScrollPaginaReport", typeof(RectTransform), typeof(ScrollRect));
+        goScroll.transform.SetParent(p.transform, false);
+        RectTransform scrt = (RectTransform)goScroll.transform;
+        scrt.anchorMin = new Vector2(0.5f, 0.5f);
+        scrt.anchorMax = new Vector2(0.5f, 0.5f);
+        scrt.pivot = new Vector2(0.5f, 0.5f);
+        scrt.anchoredPosition = new Vector2(0f, 85f);
+        scrt.sizeDelta = DimensionePaginaReport;
+
+        // Viewport con maschera: taglia la pagina ingrandita ai bordi dell'area.
+        // L'Image trasparente riceve il raycast, cosi' la pagina si puo' trascinare.
+        GameObject goViewport = new GameObject("Viewport", typeof(RectTransform), typeof(Image), typeof(RectMask2D));
+        goViewport.transform.SetParent(goScroll.transform, false);
+        RectTransform vrt = (RectTransform)goViewport.transform;
+        vrt.anchorMin = Vector2.zero;
+        vrt.anchorMax = Vector2.one;
+        vrt.offsetMin = Vector2.zero;
+        vrt.offsetMax = Vector2.zero;
+        Image vimg = goViewport.GetComponent<Image>();
+        vimg.color = new Color(1f, 1f, 1f, 0f);
+        vimg.raycastTarget = true;
+
         GameObject goImmagine = new GameObject("PaginaReport", typeof(RectTransform), typeof(RawImage));
-        goImmagine.transform.SetParent(p.transform, false);
+        goImmagine.transform.SetParent(goViewport.transform, false);
         RectTransform igt = (RectTransform)goImmagine.transform;
         igt.anchorMin = new Vector2(0.5f, 0.5f);
         igt.anchorMax = new Vector2(0.5f, 0.5f);
         igt.pivot = new Vector2(0.5f, 0.5f);
-        igt.anchoredPosition = new Vector2(0f, 85f);
-        igt.sizeDelta = new Vector2(600f, 777f);
+        igt.anchoredPosition = Vector2.zero;
+        igt.sizeDelta = DimensionePaginaReport;
 
         paginaReportImmagine = goImmagine.GetComponent<RawImage>();
         paginaReportImmagine.color = Color.white;
         paginaReportImmagine.raycastTarget = false;
         paginaReportImmagine.texture = null;
+
+        // Mini barre sovrapposte ai bordi della pagina (destra e sotto): con
+        // AutoHide compaiono solo quando la pagina ingrandita esce dall'area.
+        scrollReport = goScroll.GetComponent<ScrollRect>();
+        scrollReport.viewport = vrt;
+        scrollReport.content = igt;
+        scrollReport.horizontal = true;
+        scrollReport.vertical = true;
+        scrollReport.movementType = ScrollRect.MovementType.Clamped;
+        scrollReport.inertia = false;
+        scrollReport.verticalScrollbar = CreaBarraScorrimentoReport(goScroll.transform, true);
+        scrollReport.horizontalScrollbar = CreaBarraScorrimentoReport(goScroll.transform, false);
+        scrollReport.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+        scrollReport.horizontalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+
+        // + e - a destra della pagina, uno sopra l'altro attorno al suo centro.
+        bottoneZoomPiuReport = CreaBottoneViewer(p.transform, "+", new Vector2(365f, 135f), new Vector2(80f, 80f), 60f, ZoomPiuReport);
+        bottoneZoomMenoReport = CreaBottoneViewer(p.transform, "-", new Vector2(365f, 35f), new Vector2(80f, 80f), 60f, ZoomMenoReport);
 
         // Avanti e Indietro affiancati subito sotto la pagina, Chiudi sotto.
         bottoneIndietroReport = CreaBottoneViewer(p.transform, "Indietro", new Vector2(-155f, -355f), new Vector2(280f, 90f), 48f, IndietroPaginaReport);
@@ -1210,6 +1263,66 @@ public class GameManager : MonoBehaviour
 
         StileBottone(bottoneGO.transform, TanColor, DustyRose, DustyRose, Color.black);
         return bottone;
+    }
+
+    // Mini barra di scorrimento del viewer: verticale sul bordo destro della
+    // pagina, orizzontale sul bordo inferiore. Traccia scura semitrasparente e
+    // maniglia Steel Blue, con la stessa sprite arrotondata dei bottoni.
+    private Scrollbar CreaBarraScorrimentoReport(Transform parent, bool verticale)
+    {
+        // Abbastanza spessa da essere presa col raggio dei controller.
+        const float spessore = 26f;
+
+        GameObject barraGO = new GameObject(verticale ? "BarraVerticale" : "BarraOrizzontale", typeof(RectTransform), typeof(Image), typeof(BarraScorrimentoFluida));
+        barraGO.transform.SetParent(parent, false);
+        RectTransform brt = (RectTransform)barraGO.transform;
+        if (verticale)
+        {
+            brt.anchorMin = new Vector2(1f, 0f);
+            brt.anchorMax = new Vector2(1f, 1f);
+            brt.pivot = new Vector2(1f, 0.5f);
+            // Lascia libero l'angolo in basso, dove passa la barra orizzontale.
+            brt.offsetMin = new Vector2(-spessore, spessore);
+            brt.offsetMax = Vector2.zero;
+        }
+        else
+        {
+            brt.anchorMin = new Vector2(0f, 0f);
+            brt.anchorMax = new Vector2(1f, 0f);
+            brt.pivot = new Vector2(0.5f, 0f);
+            brt.offsetMin = Vector2.zero;
+            brt.offsetMax = new Vector2(-spessore, spessore);
+        }
+
+        Sprite sprite = SpriteArrotondato != null ? SpriteArrotondato : CreaSpriteBianco();
+        Image traccia = barraGO.GetComponent<Image>();
+        traccia.sprite = sprite;
+        traccia.type = Image.Type.Sliced;
+        traccia.color = new Color(0f, 0f, 0f, 0.35f);
+
+        GameObject areaGO = new GameObject("Sliding Area", typeof(RectTransform));
+        areaGO.transform.SetParent(barraGO.transform, false);
+        RectTransform art = (RectTransform)areaGO.transform;
+        art.anchorMin = Vector2.zero;
+        art.anchorMax = Vector2.one;
+        art.offsetMin = Vector2.zero;
+        art.offsetMax = Vector2.zero;
+
+        GameObject manigliaGO = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+        manigliaGO.transform.SetParent(areaGO.transform, false);
+        RectTransform mrt = (RectTransform)manigliaGO.transform;
+        mrt.offsetMin = Vector2.zero;
+        mrt.offsetMax = Vector2.zero;
+        Image maniglia = manigliaGO.GetComponent<Image>();
+        maniglia.sprite = sprite;
+        maniglia.type = Image.Type.Sliced;
+        maniglia.color = SteelBlue;
+
+        Scrollbar barra = barraGO.GetComponent<BarraScorrimentoFluida>();
+        barra.handleRect = mrt;
+        barra.targetGraphic = maniglia;
+        barra.direction = verticale ? Scrollbar.Direction.BottomToTop : Scrollbar.Direction.LeftToRight;
+        return barra;
     }
 
     // Testo di spiegazione per modalita'. FaiTu non compare: ha gia' il suo banner.
@@ -1615,6 +1728,7 @@ public class GameManager : MonoBehaviour
         CreaViewerReport();
         if (viewerReport == null) return;
         paginaReportCorrente = 0;
+        zoomReport = ZOOM_REPORT_MIN;
         AggiornaPaginaReport();
         viewerReport.SetActive(true);
         viewerReport.transform.SetAsLastSibling();
@@ -1697,6 +1811,58 @@ public class GameManager : MonoBehaviour
             bottoneIndietroReport.gameObject.SetActive(paginaReportCorrente > 0);
         if (bottoneAvantiReport != null)
             bottoneAvantiReport.gameObject.SetActive(paginaReportCorrente < pagineReport.Count - 1);
+
+        // Cambiando pagina lo zoom resta quello scelto, ma si riparte dall'alto
+        // a sinistra, dove inizia il testo.
+        ApplicaZoomReport(new Vector2(0f, 1f));
+    }
+
+    private void ZoomPiuReport()
+    {
+        if (zoomReport >= ZOOM_REPORT_MAX) return;
+        Vector2 centro = PosizioneScrollReport();
+        zoomReport = Mathf.Min(zoomReport + ZOOM_REPORT_PASSO, ZOOM_REPORT_MAX);
+        ApplicaZoomReport(centro);
+    }
+
+    private void ZoomMenoReport()
+    {
+        if (zoomReport <= ZOOM_REPORT_MIN) return;
+        Vector2 centro = PosizioneScrollReport();
+        zoomReport = Mathf.Max(zoomReport - ZOOM_REPORT_PASSO, ZOOM_REPORT_MIN);
+        ApplicaZoomReport(centro);
+    }
+
+    // Posizione di scorrimento da conservare durante lo zoom. A zoom 1 non c'e'
+    // nulla da scorrere e lo ScrollRect riporta 0 (in basso a sinistra): in quel
+    // caso si ingrandisce verso il centro della pagina.
+    private Vector2 PosizioneScrollReport()
+    {
+        if (scrollReport == null || zoomReport <= ZOOM_REPORT_MIN) return new Vector2(0.5f, 0.5f);
+        return scrollReport.normalizedPosition;
+    }
+
+    // Ridimensiona la pagina secondo lo zoom e la riporta alla posizione data
+    // (0..1 su ciascun asse). Le barre compaiono e spariscono da sole (AutoHide).
+    private void ApplicaZoomReport(Vector2 posizione)
+    {
+        if (scrollReport == null) return;
+
+        RectTransform content = scrollReport.content;
+        content.sizeDelta = DimensionePaginaReport * zoomReport;
+        if (zoomReport <= ZOOM_REPORT_MIN) content.anchoredPosition = Vector2.zero;
+
+        // Ricalcola subito i bounds, altrimenti normalizedPosition userebbe la
+        // dimensione vecchia della pagina.
+        Canvas.ForceUpdateCanvases();
+        if (zoomReport > ZOOM_REPORT_MIN) scrollReport.normalizedPosition = posizione;
+        scrollReport.StopMovement();
+
+        // Come Avanti/Indietro: - sparisce a zoom minimo, + a zoom massimo.
+        if (bottoneZoomMenoReport != null)
+            bottoneZoomMenoReport.gameObject.SetActive(zoomReport > ZOOM_REPORT_MIN);
+        if (bottoneZoomPiuReport != null)
+            bottoneZoomPiuReport.gameObject.SetActive(zoomReport < ZOOM_REPORT_MAX);
     }
 
     private void ChiudiViewerReport()

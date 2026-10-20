@@ -51,10 +51,12 @@ pub enum Input {
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     Send(Event),
-    /// Stop any current song, then play this one on the piano and stream it to Unity.
+    /// Stop any current song, then play this one on the piano and stream it to Unity, starting
+    /// `start_ms` milliseconds in.
     StartPlayback {
         id: PlaybackId,
         path: PathBuf,
+        start_ms: u64,
     },
     StopPlayback,
     StartExample(Challenge),
@@ -131,7 +133,7 @@ impl Core {
                 }
             }
             Command::SearchSong { query } => Self::search(&query, songs, effects),
-            Command::PlaySong(song) => self.play_song(&song, songs, effects),
+            Command::PlaySong { song, start_ms } => self.play_song(&song, start_ms, songs, effects),
             Command::PlaySongFollow(song) => self.follow_song(&song, songs, effects),
             Command::NextStep => effects.push(self.next_step()),
             Command::StopSong => {
@@ -198,14 +200,20 @@ impl Core {
             .ok_or(FILE_MISSING)
     }
 
-    fn play_song(&mut self, song: &SongRef, songs: &dyn SongLibrary, effects: &mut Vec<Effect>) {
+    fn play_song(
+        &mut self,
+        song: &SongRef,
+        start_ms: u64,
+        songs: &dyn SongLibrary,
+        effects: &mut Vec<Effect>,
+    ) {
         match Self::locate(song, songs) {
             Ok(filename) => {
                 let id = self.next_playback_id;
                 self.next_playback_id += 1;
                 self.playback = Some(id);
                 let path = songs.song_file(&filename).expect("located a moment ago");
-                effects.push(Effect::StartPlayback { id, path });
+                effects.push(Effect::StartPlayback { id, path, start_ms });
             }
             Err(message) => effects.push(send(Event::PlayError(message.to_owned()))),
         }

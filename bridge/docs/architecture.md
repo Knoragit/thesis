@@ -85,7 +85,7 @@ core.handle(input: Input, now: f64, library: &dyn SongLibrary) -> Vec<Effect>
 | `Effect` | the executor… |
 |---|---|
 | `Send(Event)` | sends a datagram to Unity |
-| `StartPlayback { id, path }` / `StopPlayback` | starts or cancels the song player |
+| `StartPlayback { id, path, start_ms }` / `StopPlayback` | starts or cancels the song player |
 | `StartExample(challenge)` / `StopExample` | starts or cancels a tutorial demonstration |
 | `RenderReport(SessionData)` | starts the report worker |
 | `Search { query }` | starts the search worker |
@@ -148,9 +148,15 @@ sent earlier with `note_hand`, if there was one.
    - reads the file into a **timeline** (`midi/timeline.rs`): all tracks merged into one list of
      messages, each with the delay before it, in seconds, tempo changes applied;
    - silences the piano (all-notes-off on the 16 channels) and sends `clear_scene`;
+   - if `play_song` carried a `start` (seconds), skips everything before it: skipped notes (and the
+     releases of notes pressed before `start`) are dropped, while every other message (pedals,
+     program changes…) is still sent to the piano so it sounds as if played from the beginning;
    - walks the timeline against a running target time, sleeping in steps of at most 1 ms so a cancel
      is noticed at once;
    - sends every message to the piano, and every note to Unity as `press`/`release`;
+   - sends `song_progress` (`position` and `duration`, in seconds) at the start, every 250 ms, and
+     once more at the end if the song was not cancelled. Unity uses it for the observer timeline,
+     and seeks by sending `play_song` again with a `start`;
    - at the end (or when cancelled) silences the piano, sends `clear_scene`, and reports
      `PlaybackFinished(id)`.
 

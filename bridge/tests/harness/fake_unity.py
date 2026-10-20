@@ -53,8 +53,13 @@ class FakeUnity:
                 continue
             except OSError:
                 return
+            datagram = Datagram(time.monotonic(), raw)
+            # Only the Rust bridge reports playback progress; leaving it out keeps the traffic
+            # comparable with the original bridge's.
+            if datagram.action == "song_progress":
+                continue
             with self._cond:
-                self._log.append(Datagram(time.monotonic(), raw))
+                self._log.append(datagram)
                 self._cond.notify_all()
 
     def close(self) -> None:

@@ -1171,6 +1171,8 @@ public class GameManager : MonoBehaviour
         Image vimg = goViewport.GetComponent<Image>();
         vimg.color = new Color(1f, 1f, 1f, 0f);
         vimg.raycastTarget = true;
+        // Trasparente ma disegnata: altrimenti il raycaster di Meta la salta.
+        vimg.canvasRenderer.cullTransparentMesh = false;
 
         GameObject goImmagine = new GameObject("PaginaReport", typeof(RectTransform), typeof(RawImage));
         goImmagine.transform.SetParent(goViewport.transform, false);

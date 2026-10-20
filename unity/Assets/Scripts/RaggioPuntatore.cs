@@ -148,8 +148,12 @@ public class RaggioPuntatore : MonoBehaviour
         RinfrescaCache();
     }
 
-    // Preferisce la mano (tra quelle tracciate) il cui raggio interseca già il
-    // piano del canvas; se nessuna lo punta, usa la prima mano tracciata valida.
+    // Preferisce la mano (tra quelle tracciate) il cui raggio cade su un elemento
+    // cliccabile; poi quella che interseca almeno il piano del canvas; se nessuna
+    // lo punta, usa la prima mano tracciata valida. Le mani tracciate sono piu'
+    // di due (Building Block e data source dell'Interaction SDK): scegliere solo
+    // per distanza faceva vincere a volte quella che puntava il vuoto, e il
+    // laser spariva anche mentre l'altra mirava un bottone.
     private bool ProvaRayMano(out Ray ray, out string sorgente)
     {
         ray = default;
@@ -157,6 +161,11 @@ public class RaggioPuntatore : MonoBehaviour
 
         Transform ct = canvas.transform;
         Plane piano = new Plane(ct.forward, ct.position);
+
+        bool interattivoTrovato = false;
+        float miglioreDistanzaInterattiva = float.MaxValue;
+        Ray miglioreInterattivo = default;
+        string miglioreSorgenteInterattiva = null;
 
         bool hitTrovato = false;
         float miglioreDistanza = float.MaxValue;
@@ -183,7 +192,16 @@ public class RaggioPuntatore : MonoBehaviour
                 fallbackSet = true;
             }
 
-            if (piano.Raycast(r, out float t) && t > 0f && (!hitTrovato || t < miglioreDistanza))
+            if (!piano.Raycast(r, out float t) || t <= 0f) continue;
+
+            if (t > 0.01f && t < miglioreDistanzaInterattiva && InterattivoSottoIlPunto(r.GetPoint(t)))
+            {
+                interattivoTrovato = true;
+                miglioreDistanzaInterattiva = t;
+                miglioreInterattivo = r;
+                miglioreSorgenteInterattiva = mano.name;
+            }
+            if (!hitTrovato || t < miglioreDistanza)
             {
                 hitTrovato = true;
                 miglioreDistanza = t;
@@ -192,6 +210,12 @@ public class RaggioPuntatore : MonoBehaviour
             }
         }
 
+        if (interattivoTrovato)
+        {
+            ray = miglioreInterattivo;
+            sorgente = miglioreSorgenteInterattiva;
+            return true;
+        }
         if (hitTrovato)
         {
             ray = migliore;

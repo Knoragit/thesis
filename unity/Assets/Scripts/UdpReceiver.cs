@@ -313,6 +313,12 @@ public class UdpReceiver : MonoBehaviour
                             // e' una nota e non deve generare nessuna colonna.
                             RiceviBridgeReady();
                         }
+                        else if (json.action == "song_progress")
+                        {
+                            // Posizione del brano di Osservatore: muove la barra del tempo.
+                            if (songListManager != null)
+                                songListManager.ProgressoBranoRicevuto(json.position, json.duration);
+                        }
                         else if (json.action == "report_status")
                         {
                             // Risposta a "get_report_status": abilita o spegne il
@@ -383,7 +389,31 @@ public class UdpReceiver : MonoBehaviour
         return "\"" + q + "\"";
     }
 
+    // Brano di Osservatore in corso, come campo JSON ("id":7 o "filename":"x.mid"):
+    // serve a farlo ripartire da un altro punto quando si trascina la barra del tempo.
+    private string branoOsservatore = null;
+
     public void InviaComandoRiproduzione(string nomeFileMidi, bool isSeguimi = false)
+    {
+        AvviaBrano("\"filename\":\"" + nomeFileMidi + "\"", isSeguimi, 0f);
+        UnityEngine.Debug.Log($"[UDP] Richiesto brano ({(isSeguimi ? "play_song_follow" : "play_song")}): {nomeFileMidi}");
+    }
+
+    public void InviaComandoRiproduzioneConId(int songId, bool isSeguimi = false)
+    {
+        AvviaBrano("\"id\":" + songId, isSeguimi, 0f);
+        UnityEngine.Debug.Log($"[UDP] Richiesto brano ({(isSeguimi ? "play_song_follow" : "play_song")}) con id: {songId}");
+    }
+
+    // Fa ripartire il brano di Osservatore dal secondo indicato (barra del tempo).
+    public void InviaComandoSaltaA(float secondi)
+    {
+        if (branoOsservatore == null) return;
+        AvviaBrano(branoOsservatore, false, secondi);
+        UnityEngine.Debug.Log($"[UDP] Brano ripreso da {secondi:F1}s");
+    }
+
+    private void AvviaBrano(string campoBrano, bool isSeguimi, float inizio)
     {
         // 1. Prima di tutto blocchiamo la riproduzione precedente
         InviaComandoStop();
@@ -397,27 +427,13 @@ public class UdpReceiver : MonoBehaviour
         }
 
         // 3. Mandiamo il comando al nuovo brano
+        branoOsservatore = isSeguimi ? null : campoBrano;
         string azione = isSeguimi ? "play_song_follow" : "play_song";
-        string json = "{\"action\":\"" + azione + "\", \"filename\":\"" + nomeFileMidi + "\"}";
+        string json = "{\"action\":\"" + azione + "\", " + campoBrano;
+        if (inizio > 0f)
+            json += ", \"start\":" + inizio.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        json += "}";
         InviaJsonAPython(json);
-        UnityEngine.Debug.Log($"[UDP] Richiesto brano ({azione}): {nomeFileMidi}");
-    }
-
-    public void InviaComandoRiproduzioneConId(int songId, bool isSeguimi = false)
-    {
-        InviaComandoStop();
-
-        PianoVisualizer vis = FindFirstObjectByType<PianoVisualizer>();
-        if (vis != null)
-        {
-            vis.ResetVisualizer();
-            vis.PulisciNoteAtteseVisive();
-        }
-
-        string azione = isSeguimi ? "play_song_follow" : "play_song";
-        string json = "{\"action\":\"" + azione + "\", \"id\":" + songId + "}";
-        InviaJsonAPython(json);
-        UnityEngine.Debug.Log($"[UDP] Richiesto brano ({azione}) con id: {songId}");
     }
 
     public void InviaComandoStartFaiTu(string nomePerformance = "Improvvisazione_Libera")
@@ -606,6 +622,8 @@ public class UdpReceiver : MonoBehaviour
         public string folder;
         public int pages;
         public bool has_material;
+        public float position;
+        public float duration;
         public SongData[] songs;
         public MidiData() { }
     }

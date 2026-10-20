@@ -38,9 +38,17 @@ pub enum Challenge {
 pub enum Command {
     Ping,
     ListSongs,
-    SearchSong { query: String },
-    SearchSuggest { query: String },
-    PlaySong(SongRef),
+    SearchSong {
+        query: String,
+    },
+    SearchSuggest {
+        query: String,
+    },
+    /// Plays a song from `start_ms` milliseconds in (0 for the beginning).
+    PlaySong {
+        song: SongRef,
+        start_ms: u64,
+    },
     PlaySongFollow(SongRef),
     NextStep,
     StopSong,
@@ -48,7 +56,10 @@ pub enum Command {
     StopExample,
     StartFaiTu,
     StopFaiTu,
-    NoteHand { note: u8, hand: Hand },
+    NoteHand {
+        note: u8,
+        hand: Hand,
+    },
     GenerateReport,
     GetReportStatus,
 }
@@ -69,7 +80,10 @@ pub fn parse_command(datagram: &[u8]) -> Option<Command> {
         "search_suggest" => Command::SearchSuggest {
             query: query(&object)?,
         },
-        "play_song" => Command::PlaySong(song_ref(&object)),
+        "play_song" => Command::PlaySong {
+            song: song_ref(&object),
+            start_ms: start_ms(&object),
+        },
         "play_song_follow" => Command::PlaySongFollow(song_ref(&object)),
         "next_step" => Command::NextStep,
         "stop_song" => Command::StopSong,
@@ -114,6 +128,15 @@ fn song_ref(object: &Map<String, Value>) -> SongRef {
             _ => SongRef::Missing,
         },
     }
+}
+
+/// Where to start a song: `start` in seconds. Missing, negative or unusable means the beginning.
+fn start_ms(object: &Map<String, Value>) -> u64 {
+    object
+        .get("start")
+        .and_then(Value::as_f64)
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .map_or(0, |seconds| (seconds * 1000.0).min(u64::MAX as f64) as u64)
 }
 
 fn challenge(object: &Map<String, Value>) -> Option<Challenge> {
@@ -188,6 +211,11 @@ pub enum Event {
     },
     ReportStatus {
         has_material: bool,
+    },
+    /// How far the observer song has got, both in seconds.
+    SongProgress {
+        position: f64,
+        duration: f64,
     },
 }
 
@@ -272,6 +300,11 @@ impl Event {
                 action: "report_status",
                 has_material: *has_material,
             }),
+            Self::SongProgress { position, duration } => to_wire(&SongProgressWire {
+                action: "song_progress",
+                position: *position,
+                duration: *duration,
+            }),
         }
     }
 }
@@ -339,6 +372,13 @@ struct ReportReadyWire<'a> {
 struct ReportStatusWire {
     action: &'static str,
     has_material: bool,
+}
+
+#[derive(Serialize)]
+struct SongProgressWire {
+    action: &'static str,
+    position: f64,
+    duration: f64,
 }
 
 fn to_wire<T: Serialize>(value: &T) -> Vec<u8> {
@@ -416,6 +456,13 @@ mod tests {
         assert_eq!(text(&Event::BridgeReady), r#"{"action": "bridge_ready"}"#);
         assert_eq!(text(&Event::ClearScene), r#"{"action": "clear_scene"}"#);
         assert_eq!(text(&Event::ExampleDone), r#"{"action": "example_done"}"#);
+        assert_eq!(
+            text(&Event::SongProgress {
+                position: 12.5,
+                duration: 180.0
+            }),
+            r#"{"action": "song_progress", "position": 12.5, "duration": 180.0}"#
+        );
         assert_eq!(
             text(&Event::ReportStatus {
                 has_material: false
@@ -578,31 +625,31 @@ mod tests {
 
     #[test]
     fn song_references() {
-        use Command::PlaySong;
+        let play = |song| Some(Command::PlaySong { song, start_ms: 0 });
         assert_eq!(
             parse(r#"{"action":"play_song","id":7}"#),
-            Some(PlaySong(SongRef::Id(7)))
+            play(SongRef::Id(7))
         );
         assert_eq!(
             parse(r#"{"action":"play_song","filename":"a.mid"}"#),
-            Some(PlaySong(SongRef::Filename("a.mid".into())))
+            play(SongRef::Filename("a.mid".into()))
         );
         // The id wins, even next to a filename or when it is not a number at all.
         assert_eq!(
             parse(r#"{"action":"play_song","id":7,"filename":"a.mid"}"#),
-            Some(PlaySong(SongRef::Id(7)))
+            play(SongRef::Id(7))
         );
         assert_eq!(
             parse(r#"{"action":"play_song","id":"x","filename":"a.mid"}"#),
-            Some(PlaySong(SongRef::Missing))
+            play(SongRef::Missing)
         );
         assert_eq!(
             parse(r#"{"action":"play_song","id":"7"}"#),
-            Some(PlaySong(SongRef::Id(7)))
+            play(SongRef::Id(7))
         );
         assert_eq!(
             parse(r#"{"action":"play_song","id":7.0}"#),
-            Some(PlaySong(SongRef::Id(7)))
+            play(SongRef::Id(7))
         );
         for json in [
             r#"{"action":"play_song"}"#,
@@ -610,12 +657,29 @@ mod tests {
             r#"{"action":"play_song","filename":5}"#,
             r#"{"action":"play_song","id":null}"#,
         ] {
-            assert_eq!(parse(json), Some(PlaySong(SongRef::Missing)), "{json}");
+            assert_eq!(parse(json), play(SongRef::Missing), "{json}");
         }
         assert_eq!(
             parse(r#"{"action":"play_song_follow","id":2}"#),
             Some(Command::PlaySongFollow(SongRef::Id(2)))
         );
+    }
+
+    #[test]
+    fn a_song_can_start_part_way_through() {
+        let start = |json: &str| match parse(json) {
+            Some(Command::PlaySong { start_ms, .. }) => start_ms,
+            other => panic!("expected play_song, got {other:?}"),
+        };
+        assert_eq!(
+            start(r#"{"action":"play_song","id":7,"start":42.5}"#),
+            42_500
+        );
+        assert_eq!(start(r#"{"action":"play_song","id":7,"start":3}"#), 3_000);
+        for unusable in ["-1", r#""10""#, "null", "0"] {
+            let json = format!(r#"{{"action":"play_song","id":7,"start":{unusable}}}"#);
+            assert_eq!(start(&json), 0, "{json}");
+        }
     }
 
     #[test]

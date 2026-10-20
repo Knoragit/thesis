@@ -151,7 +151,11 @@ fn events(effects: Vec<Effect>) -> Vec<Event> {
 }
 
 fn by_name(name: &str) -> Command {
-    Command::PlaySong(SongRef::Filename(name.to_owned()))
+    play(SongRef::Filename(name.to_owned()))
+}
+
+fn play(song: SongRef) -> Command {
+    Command::PlaySong { song, start_ms: 0 }
 }
 
 fn follow(name: &str) -> Command {
@@ -190,14 +194,27 @@ fn playing_a_song_by_name_or_id_starts_playback() {
         h.command(by_name("chords.mid")),
         [Effect::StartPlayback {
             id: 0,
-            path: "/songs/chords.mid".into()
+            path: "/songs/chords.mid".into(),
+            start_ms: 0,
         }]
     );
     assert_eq!(
-        h.command(Command::PlaySong(SongRef::Id(2))),
+        h.command(play(SongRef::Id(2))),
         [Effect::StartPlayback {
             id: 1,
-            path: "/songs/other.mid".into()
+            path: "/songs/other.mid".into(),
+            start_ms: 0,
+        }]
+    );
+    assert_eq!(
+        h.command(Command::PlaySong {
+            song: SongRef::Id(2),
+            start_ms: 30_000
+        }),
+        [Effect::StartPlayback {
+            id: 2,
+            path: "/songs/other.mid".into(),
+            start_ms: 30_000,
         }]
     );
 }
@@ -207,8 +224,8 @@ fn unknown_songs_get_an_error_and_change_nothing() {
     let mut h = Harness::new();
     let not_in_db = Event::PlayError(NOT_IN_DATABASE.into());
     for command in [
-        Command::PlaySong(SongRef::Id(99)),
-        Command::PlaySong(SongRef::Missing),
+        play(SongRef::Id(99)),
+        play(SongRef::Missing),
         Command::PlaySongFollow(SongRef::Id(99)),
         Command::PlaySongFollow(SongRef::Missing),
     ] {

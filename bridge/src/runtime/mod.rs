@@ -128,7 +128,9 @@ impl Executor<'_> {
     fn execute(&mut self, effect: Effect) {
         match effect {
             Effect::Send(event) => self.services.unity.send(&event),
-            Effect::StartPlayback { id, path } => self.playback.start(id, path, self.services),
+            Effect::StartPlayback { id, path, start_ms } => {
+                self.playback.start(id, path, start_ms, self.services);
+            }
             Effect::StopPlayback => self.playback.cancel(),
             Effect::StartExample(challenge) => self.examples.start(challenge, self.services),
             Effect::StopExample => self.examples.stop(),

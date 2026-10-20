@@ -56,6 +56,8 @@ public class SongListManager : MonoBehaviour
     private string queryDebounce = "";
     private PianoVisualizer visualizerCache;
     private RaggioPuntatore raggioCache;
+    // Barra del tempo di Osservatore: compare dopo aver scelto un brano.
+    private BarraTempoOsservatore barraTempo;
 
     private GameManager.AppState statoPrecedente = GameManager.AppState.Onboarding;
 
@@ -122,6 +124,13 @@ public class SongListManager : MonoBehaviour
 
         cerchioObserver = CreaCerchioPlus(contenitoreObserver);
         cerchioSeguimi = CreaCerchioPlus(contenitoreSeguimi);
+
+        Canvas canvasObserver = contenitoreObserver != null ? contenitoreObserver.GetComponentInParent<Canvas>() : null;
+        if (canvasObserver != null)
+        {
+            barraTempo = gameObject.AddComponent<BarraTempoOsservatore>();
+            barraTempo.Inizializza(canvasObserver, () => cerchioObserver != null ? (RectTransform)cerchioObserver.transform : null);
+        }
 
         AggiornaGruppoAttivo();
     }
@@ -609,13 +618,24 @@ public class SongListManager : MonoBehaviour
     // modalità ricerca e ricarica la lista completa (lista iniziale + brano cercato).
     public void CanzoneAvviata()
     {
-        if (!inRicerca) return;
-        TerminaRicerca(true);
+        if (inRicerca) TerminaRicerca(true);
+        if (barraTempo != null && gameManager != null && gameManager.statoAttuale == GameManager.AppState.Osservatore)
+            barraTempo.Abilita();
+    }
+
+    // Posizione del brano di Osservatore inviata dal bridge ("song_progress").
+    public void ProgressoBranoRicevuto(float posizione, float durata)
+    {
+        if (barraTempo == null || gameManager == null) return;
+        if (gameManager.statoAttuale != GameManager.AppState.Osservatore) return;
+        barraTempo.Progresso(posizione, durata);
     }
 
     // Ferma l'esecuzione corrente (riproduzione + colonne) e pulisce il visualizzatore.
     private void FermaRiproduzione()
     {
+        if (barraTempo != null) barraTempo.Disabilita();
+
         if (receiver == null) receiver = FindFirstObjectByType<UdpReceiver>();
         if (receiver != null) receiver.InviaComandoStop();
 

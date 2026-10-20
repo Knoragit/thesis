@@ -59,6 +59,52 @@ public class GameManager : MonoBehaviour
     // Coroutine dell'esempio/sfida corrente del Tutorial: fermata se si abbandona
     // o si riapre il tutorial (evita coroutine orfane che bloccano la rilevazione).
     private Coroutine tutorialCoroutine = null;
+    // Messaggio "COMPLETATO"/errore in corso: fermato da "Cambia difficolta'".
+    private Coroutine transizioneTutorialCoroutine = null;
+
+    // --- LIVELLI DEL TUTORIAL ---
+    // Tre livelli, ognuno con le sue sfide in ordine (numeri "sfida" del bridge).
+    // Le sfide di un livello si susseguono una dopo l'altra; solo alla fine si
+    // torna al menu delle difficolta'. Uscendo prima con "Cambia difficolta'",
+    // riscegliendo lo stesso livello si riprende dalla sfida a cui si era arrivati.
+    // Finito un livello il suo bottone diventa sbiadito (solo per la sessione) e
+    // si ricomincia dalla prima.
+    private static readonly string[] NomiLivelli = { "Semplice", "Medio", "Difficile" };
+    private static readonly int[][] SfideLivelli =
+    {
+        new[] { 1, 2, 3, 4 },
+        new[] { 5, 6, 7 },
+        new[] { 8, 9, 10 },
+    };
+    private readonly int[] prossimaSfidaLivello = new int[3];
+    private readonly bool[] livelloCompletato = new bool[3];
+    private int livelloAttuale = -1;
+    private GameObject menuDifficolta;
+    private readonly Button[] bottoniDifficolta = new Button[3];
+    private GameObject bottoneCambiaDifficolta;
+    // Tan schiarita: livello gia' completato, ma sempre cliccabile.
+    private static readonly Color LivelloCompletatoColore = new Color(0.8941f, 0.8353f, 0.7725f, 1f); // #e5d5c6
+
+    // Stato delle sfide di Medio e Difficile (sequenze di note da confrontare).
+    private readonly List<int> noteSequenza = new List<int>();
+    private readonly List<float> velocitaSequenza = new List<float>();
+    private readonly List<float> tempiSequenza = new List<float>();
+    private readonly Dictionary<int, float> tempoPressione = new Dictionary<int, float>();
+    private int faseSfida = 0;
+    private int contatoreSfida = 0;
+    private int notaInAttesa = -1;
+    private float velocitaInAttesa = 0f;
+    private float tempoInAttesa = 0f;
+
+    // Soglie delle nuove sfide (velocity 0..1 come arriva dal bridge, tempi in s).
+    private const float SOGLIA_FORTE = 0.55f;
+    private const float SOGLIA_PIANO = 0.35f;
+    private const float SCARTO_ACCENTO = 0.10f;
+    private const float SCARTO_VOCE_ALTA = 0.08f;
+    private const float FINESTRA_ACCORDO = 0.12f;
+    private const float DURATA_MAX_STACCATO_MEDIO = 0.35f;
+    private const float SOVRAPPOSIZIONE_MAX_LEGATO = 0.35f;
+    private const float PAUSA_RIPARTENZA = 3.5f;
 
     // Gestione Note per la modalità "Seguimi"
     private List<int> expectedNotes = new List<int>();
@@ -343,6 +389,7 @@ public class GameManager : MonoBehaviour
         // bottone "Genera Report" senza dover uscire e rientrare nel menu.
         if (udpReceiver != null) udpReceiver.BridgeProntoRicevuto += OnBridgePronto;
         CreaBottoneHomeTutorial();
+        CreaMenuDifficolta();
         SpostaGeneraReportInMenu();
         IngrandisciBottoniUI();
         SistemaTestiUI();
@@ -432,6 +479,13 @@ public class GameManager : MonoBehaviour
             TextMeshProUGUI txtTutorial = t != null
                 ? t.GetComponentInChildren<TextMeshProUGUI>(true) : null;
             if (txtTutorial != null) txtTutorial.text = "Torna al\nMen\u00F9";
+
+            // "Cambia difficolta'" e' identico a "Torna al Menu", appena sotto.
+            Transform cambia = tutorialGroup.transform.Find("CambiaDifficolta");
+            CopiaStileBottoneTorna(cambia, rif);
+            TextMeshProUGUI txtCambia = cambia != null
+                ? cambia.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+            if (txtCambia != null) txtCambia.text = "Cambia\ndifficolt\u00E0";
         }
 
         CopiaStileBottoneTorna(TrovaFiglio(observerGroup, "Bottone-Indietro"), rif);
@@ -496,6 +550,8 @@ public class GameManager : MonoBehaviour
         StileBottone(TrovaFiglio(menuGroup, "GeneraReport"), TanColor, DustyRose, DustyRose, Color.black);
         StileBottone(TrovaFiglio(faiTuGroup, "TornaAlMen\u00F9"), TanColor, DustyRose, DustyRose, Color.black);
         StileBottone(TrovaFiglio(tutorialGroup, "TornaAlMenu"), TanColor, DustyRose, DustyRose, Color.black);
+        StileBottone(TrovaFiglio(tutorialGroup, "CambiaDifficolta"), TanColor, DustyRose, DustyRose, Color.black);
+        AggiornaAspettoDifficolta();
 
         // "Indietro" di Osservatore/Seguimi: gestiti a mano da IndietroFeedback.
         StileIndietro(TrovaFiglio(observerGroup, "Bottone-Indietro"));
@@ -555,6 +611,7 @@ public class GameManager : MonoBehaviour
         // CopiaStileBottoneTorna() gira PRIMA di questo metodo e copierebbe quindi
         // il valore di scena (72): va reimposto anche il bottone del tutorial.
         ImpostaFontSizeFigli(tutorialGroup, "TornaAlMenu", FS_RIPRESA);
+        ImpostaFontSizeFigli(tutorialGroup, "CambiaDifficolta", FS_RIPRESA);
 
         ImpostaFontSizeFigli(observerGroup, "Bottone-Indietro", FS_INDIETRO);
         ImpostaFontSizeFigli(seguimiGroup, "Bottone-Indietro", FS_INDIETRO);
@@ -888,6 +945,11 @@ public class GameManager : MonoBehaviour
             {
                 StopCoroutine(tutorialCoroutine);
                 tutorialCoroutine = null;
+            }
+            if (transizioneTutorialCoroutine != null)
+            {
+                StopCoroutine(transizioneTutorialCoroutine);
+                transizioneTutorialCoroutine = null;
             }
             if (esempioInCorso)
             {
@@ -1441,8 +1503,135 @@ public class GameManager : MonoBehaviour
         clearSceneInAttesa = false;
 
         CambiaStato(AppState.Tutorial);
-        if (tutorialCoroutine != null) StopCoroutine(tutorialCoroutine);
-        tutorialCoroutine = StartCoroutine(AvviaSfidaConEsempio(1, "SFIDA 1:\nPremi un tasto molto delicatamente (Suona 'Piano')"));
+        // Dopo il pannello introduttivo compare il menu delle difficolta': il
+        // gruppo e' ancora spento, qui si sceglie solo cosa sara' visibile.
+        MostraMenuDifficolta();
+    }
+
+    // --- MENU DELLE DIFFICOLTA' ---
+    private void MostraMenuDifficolta()
+    {
+        FermaSfidaInCorso();
+        sfidaAttuale = 0;
+        livelloAttuale = -1;
+        PreparaSfidaPerLUtente();
+        ImpostaVistaTutorial(false);
+        AggiornaAspettoDifficolta();
+        RinfrescaRaggio();
+    }
+
+    public void ScegliDifficolta(int livello)
+    {
+        if (statoAttuale != AppState.Tutorial || livello < 0 || livello >= SfideLivelli.Length) return;
+
+        livelloAttuale = livello;
+        int sfida = SfideLivelli[livello][prossimaSfidaLivello[livello]];
+        ImpostaVistaTutorial(true);
+        RinfrescaRaggio();
+
+        FermaSfidaInCorso();
+        tutorialCoroutine = StartCoroutine(AvviaSfidaConEsempio(sfida, DescrizioneSfida(sfida)));
+    }
+
+    public void CambiaDifficolta()
+    {
+        if (statoAttuale != AppState.Tutorial) return;
+        MostraMenuDifficolta();
+        PulisciScena();
+    }
+
+    // Ferma esempio, sfida e messaggi in corso: si puo' cambiare difficolta' in
+    // qualsiasi momento senza lasciare coroutine o note dell'esempio appese.
+    private void FermaSfidaInCorso()
+    {
+        if (tutorialCoroutine != null)
+        {
+            StopCoroutine(tutorialCoroutine);
+            tutorialCoroutine = null;
+        }
+        if (transizioneTutorialCoroutine != null)
+        {
+            StopCoroutine(transizioneTutorialCoroutine);
+            transizioneTutorialCoroutine = null;
+        }
+        if (esempioInCorso && udpReceiver != null) udpReceiver.InviaComandoStopEsempio();
+        esempioInCorso = false;
+        esempioCompletato = false;
+        clearSceneInAttesa = false;
+        // StopCoroutine non esegue il finally di AvviaSfidaConEsempio.
+        inTransizione = false;
+    }
+
+    // true = pannello della sfida con "Cambia difficolta'"; false = menu dei livelli.
+    // "Torna al Menu" resta sempre visibile in alto a sinistra.
+    private void ImpostaVistaTutorial(bool sfide)
+    {
+        Transform sfondo = TrovaFiglio(tutorialGroup, "Sfondo");
+        if (sfondo != null) sfondo.gameObject.SetActive(sfide);
+        if (tutorialText != null) tutorialText.gameObject.SetActive(sfide);
+        if (bottoneCambiaDifficolta != null) bottoneCambiaDifficolta.SetActive(sfide);
+        if (menuDifficolta != null) menuDifficolta.SetActive(!sfide);
+    }
+
+    // Livelli completati: Tan schiarita e testo attenuato, ma sempre cliccabili.
+    private void AggiornaAspettoDifficolta()
+    {
+        for (int i = 0; i < bottoniDifficolta.Length; i++)
+        {
+            if (bottoniDifficolta[i] == null) continue;
+            bool fatto = livelloCompletato[i];
+            StileBottone(bottoniDifficolta[i].transform,
+                fatto ? LivelloCompletatoColore : TanColor, DustyRose, DustyRose,
+                fatto ? new Color(0f, 0f, 0f, 0.55f) : Color.black);
+        }
+    }
+
+    private void RinfrescaRaggio()
+    {
+        RaggioPuntatore raggio = FindFirstObjectByType<RaggioPuntatore>();
+        if (raggio != null) raggio.RinfrescaOra();
+    }
+
+    // Il menu dei livelli sta al posto del pannello della sfida, con bottoni un
+    // po' piu' piccoli di quelli del menu principale.
+    private void CreaMenuDifficolta()
+    {
+        if (tutorialGroup == null || menuDifficolta != null) return;
+
+        menuDifficolta = new GameObject("MenuDifficolta", typeof(RectTransform));
+        menuDifficolta.transform.SetParent(tutorialGroup.transform, false);
+        RectTransform rt = (RectTransform)menuDifficolta.transform;
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(600f, 600f);
+
+        GameObject titoloGO = new GameObject("Titolo", typeof(RectTransform));
+        titoloGO.transform.SetParent(menuDifficolta.transform, false);
+        RectTransform trt = (RectTransform)titoloGO.transform;
+        trt.anchorMin = new Vector2(0.5f, 0.5f);
+        trt.anchorMax = new Vector2(0.5f, 0.5f);
+        trt.pivot = new Vector2(0.5f, 0.5f);
+        trt.anchoredPosition = new Vector2(0f, 230f);
+        trt.sizeDelta = new Vector2(700f, 100f);
+        TextMeshProUGUI titolo = titoloGO.AddComponent<TextMeshProUGUI>();
+        titolo.text = "Scegli la difficolt\u00E0";
+        titolo.fontSize = 56f;
+        titolo.alignment = TextAlignmentOptions.Center;
+        titolo.color = TestoChiaro;
+        titolo.raycastTarget = false;
+        ApplicaStileTesto(titolo);
+
+        for (int i = 0; i < NomiLivelli.Length; i++)
+        {
+            int livello = i;
+            bottoniDifficolta[i] = CreaBottoneViewer(menuDifficolta.transform, NomiLivelli[i],
+                new Vector2(0f, 90f - i * 140f), new Vector2(380f, 110f), FS_MENU,
+                () => ScegliDifficolta(livello));
+        }
+
+        menuDifficolta.SetActive(false);
     }
 
     public bool EsempioInCorso => esempioInCorso;
@@ -1497,8 +1686,45 @@ public class GameManager : MonoBehaviour
             case 2: return "Scala dinamica crescente";
             case 3: return "Staccato";
             case 4: return "Legato";
+            case 5: return "L'eco dinamico";
+            case 6: return "Il passo sospeso";
+            case 7: return "L'accento sulla prima";
+            case 8: return "Il sospiro";
+            case 9: return "Il canto in primo piano";
+            case 10: return "Il tocco vellutato";
             default: return "Suona piano";
         }
+    }
+
+    // Posizione della sfida dentro il suo livello (1, 2, 3...): e' il numero
+    // mostrato all'utente, non quello che riceve il bridge.
+    private static int NumeroInLivello(int sfida)
+    {
+        foreach (int[] sfide in SfideLivelli)
+        {
+            int indice = System.Array.IndexOf(sfide, sfida);
+            if (indice >= 0) return indice + 1;
+        }
+        return sfida;
+    }
+
+    private static string DescrizioneSfida(int sfida)
+    {
+        string testo;
+        switch (sfida)
+        {
+            case 2: testo = "Esegui una Scala dinamica crescente di 4 note (note verso destra sempre pi\u00F9 forti)"; break;
+            case 3: testo = "Esegui lo 'Staccato' (Suona le due note in rapida successione con un tocco brevissimo e staccato su ciascuna, come se i tasti scottassero)"; break;
+            case 4: testo = "Esegui il 'Legato' (suona la nota successiva prima di rilasciare la precedente)"; break;
+            case 5: testo = "Suona 4 note forte, poi ripeti le stesse 4 note piano, come un'eco"; break;
+            case 6: testo = "Suona 4 note: le prime due legate (premi la seconda prima di lasciare la prima), le ultime due staccate (tocchi brevi e separati)"; break;
+            case 7: testo = "Suona due gruppi di 4 note: in ogni gruppo premi la prima nota un po' pi\u00F9 forte delle altre tre"; break;
+            case 8: testo = "Suona 5 note rallentando un poco verso la fine, come un respiro che si ferma"; break;
+            case 9: testo = "Suona due accordi di due note insieme: la nota pi\u00F9 alta deve suonare un po' pi\u00F9 forte di quella sotto"; break;
+            case 10: testo = "Suona 5 note legate senza vuoti: premi la nota nuova appena prima di lasciare la precedente"; break;
+            default: testo = "Premi un tasto molto delicatamente (Suona 'Piano')"; break;
+        }
+        return "SFIDA " + NumeroInLivello(sfida) + ":\n" + testo;
     }
 
     // Ogni sfida mostra prima l'ESEMPIO (colonna + suono dal pianoforte, registrato
@@ -1519,7 +1745,7 @@ public class GameManager : MonoBehaviour
 
             if (tutorialText != null)
             {
-                tutorialText.text = "SFIDA " + sfida + "\n" + TitoloSfida(sfida)
+                tutorialText.text = "SFIDA " + NumeroInLivello(sfida) + "\n" + TitoloSfida(sfida)
                                     + "\n\nCome l'esempio che visualizzi";
             }
 
@@ -1536,7 +1762,7 @@ public class GameManager : MonoBehaviour
                 {
                     if (tutorialText != null)
                     {
-                        tutorialText.text = "SFIDA " + sfida + "\n" + TitoloSfida(sfida)
+                        tutorialText.text = "SFIDA " + NumeroInLivello(sfida) + "\n" + TitoloSfida(sfida)
                                             + "\n\nConnessione alla tastiera in corso...";
                     }
                     yield return null;
@@ -1570,10 +1796,10 @@ public class GameManager : MonoBehaviour
                 // fermando l'eventuale esempio partito prima di riprovare (altrimenti
                 // si sovrappongono due riproduzioni).
                 const int TENTATIVI_MAX = 3;
-                // 5s: l'esempio piu' lungo (sfida 2, scala crescente) dura 3.0s, quindi
+                // 7s: l'esempio piu' lungo (eco dinamico, livello Medio) dura 3.7s, quindi
                 // una soglia piu' breve farebbe scattare il ritento mentre l'esempio sta
                 // ancora suonando e lo riavvierebbe da capo.
-                const float ATTESA_PER_TENTATIVO = 5f;
+                const float ATTESA_PER_TENTATIVO = 7f;
 
                 for (int tentativo = 1; tentativo <= TENTATIVI_MAX && !esempioCompletato; tentativo++)
                 {
@@ -1648,6 +1874,13 @@ public class GameManager : MonoBehaviour
 
     private void PreparaSfidaPerLUtente()
     {
+        noteSequenza.Clear();
+        velocitaSequenza.Clear();
+        tempiSequenza.Clear();
+        tempoPressione.Clear();
+        faseSfida = 0;
+        contatoreSfida = 0;
+        notaInAttesa = -1;
         tastiTutorialPremuti.Clear();
         primaNotaStaccato = -1;
         noteScalaCrescente = 0;
@@ -1893,15 +2126,22 @@ public class GameManager : MonoBehaviour
     private void CreaBottoneHomeTutorial()
     {
         if (tutorialGroup == null) return;
+        CreaBottoneTutorial("TornaAlMenu", "Torna al\nMen\u00F9", new Vector2(-500f, 500f), AttivaMenu);
+        // Stessa misura, subito sotto "Torna al Menu" (30 di spazio tra i due).
+        bottoneCambiaDifficolta = CreaBottoneTutorial("CambiaDifficolta", "Cambia\ndifficolt\u00E0", new Vector2(-500f, 240f), CambiaDifficolta);
+        bottoneCambiaDifficolta.SetActive(false);
+    }
 
-        GameObject bottoneGO = new GameObject("TornaAlMenu", typeof(RectTransform));
+    private GameObject CreaBottoneTutorial(string nome, string testo, Vector2 posizione, UnityAction onClick)
+    {
+        GameObject bottoneGO = new GameObject(nome, typeof(RectTransform));
         bottoneGO.transform.SetParent(tutorialGroup.transform, false);
 
         RectTransform rt = (RectTransform)bottoneGO.transform;
         rt.anchorMin = new Vector2(0.5f, 0.5f);
         rt.anchorMax = new Vector2(0.5f, 0.5f);
         rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = new Vector2(-500f, 500f);
+        rt.anchoredPosition = posizione;
         rt.sizeDelta = new Vector2(460f, 230f);
 
         Image sfondo = bottoneGO.AddComponent<Image>();
@@ -1910,7 +2150,7 @@ public class GameManager : MonoBehaviour
 
         Button bottone = bottoneGO.AddComponent<Button>();
         bottone.targetGraphic = sfondo;
-        bottone.onClick.AddListener(AttivaMenu);
+        bottone.onClick.AddListener(onClick);
 
         GameObject labelGO = new GameObject("Testo", typeof(RectTransform));
         labelGO.transform.SetParent(bottoneGO.transform, false);
@@ -1922,7 +2162,7 @@ public class GameManager : MonoBehaviour
         rtLabel.offsetMax = Vector2.zero;
 
         TextMeshProUGUI label = labelGO.AddComponent<TextMeshProUGUI>();
-        label.text = "Torna al\nMen\u00F9";
+        label.text = testo;
         label.font = FontApp != null
             ? FontApp
             : (TMP_Settings.defaultFontAsset != null
@@ -1933,6 +2173,7 @@ public class GameManager : MonoBehaviour
         label.alignment = TextAlignmentOptions.Center;
         label.raycastTarget = true;
         ApplicaStileTesto(label);
+        return bottoneGO;
     }
 
     private Sprite CreaSpriteBianco()
@@ -2038,13 +2279,15 @@ public class GameManager : MonoBehaviour
 
             float kdt = (tempoUltimoRilascio > 0) ? (Time.time - tempoUltimoRilascio) : 0f;
             bool ceSovrapposizioneKOT = (tastiTutorialPremuti.Count > 1);
+            float ora = Time.time;
+            tempoPressione[nota] = ora;
 
             switch (sfidaAttuale)
             {
                 case 1:
                     if (velocity < 0.236f)
                     {
-                        StartCoroutine(TransizioneSfidaCoroutine(2, "SFIDA 2:\nEsegui una Scala dinamica crescente di 4 note (note verso destra sempre pi\u00F9 forti)"));
+                        CompletaSfida();
                     }
                     break;
 
@@ -2075,7 +2318,7 @@ public class GameManager : MonoBehaviour
                             noteScalaCrescente++;
                             if (noteScalaCrescente >= 4)
                             {
-                                StartCoroutine(TransizioneSfidaCoroutine(3, "SFIDA 3:\nEsegui lo 'Staccato' (Suona le due note in rapida successione con un tocco brevissimo e staccato su ciascuna, come se i tasti scottassero)"));
+                                CompletaSfida();
                             }
                         }
                         else
@@ -2096,23 +2339,47 @@ public class GameManager : MonoBehaviour
 
                     if (!ceSovrapposizioneKOT && tempoUltimoRilascio > 0 && kdt > 0.04f && kdt < 0.5f && nota != primaNotaStaccato)
                     {
-                        StartCoroutine(TransizioneSfidaCoroutine(4, "SFIDA 4:\nEsegui il 'Legato' (suona la nota successiva prima di rilasciare la precedente)"));
+                        CompletaSfida();
                     }
                     else if (tempoUltimoRilascio > 0 && ceSovrapposizioneKOT)
                     {
-                        StartCoroutine(TransizioneErroreCoroutine("Errore: Note sovrapposte!", "SFIDA 3:\nEsegui lo 'Staccato' (Suona le due note in rapida successione con un tocco brevissimo e staccato su ciascuna, come se i tasti scottassero)"));
+                        ErroreSfida("Errore: Note sovrapposte!");
                     }
                     break;
 
                 case 4:
                     if (ceSovrapposizioneKOT)
                     {
-                        StartCoroutine(FineTutorialCoroutine());
+                        CompletaSfida();
                     }
                     else if (tempoUltimoRilascio > 0)
                     {
-                        StartCoroutine(TransizioneErroreCoroutine("Errore: Note staccate!", "SFIDA 4:\nEsegui il 'Legato' (suona la nota successiva prima di rilasciare la precedente)"));
+                        ErroreSfida("Errore: Note staccate!");
                     }
+                    break;
+
+                case 5:
+                    ValutaEcoDinamico(nota, velocity, ora);
+                    break;
+
+                case 6:
+                    ValutaPassoSospesoPressione(ceSovrapposizioneKOT);
+                    break;
+
+                case 7:
+                    ValutaAccento(velocity, ora);
+                    break;
+
+                case 8:
+                    ValutaSospiro(ora);
+                    break;
+
+                case 9:
+                    ValutaCantoPrimoPiano(nota, velocity, ora);
+                    break;
+
+                case 10:
+                    ValutaToccoVellutatoPressione(ceSovrapposizioneKOT);
                     break;
             }
         }
@@ -2121,23 +2388,249 @@ public class GameManager : MonoBehaviour
         {
             tastiTutorialPremuti.Remove(nota);
             if (tastiTutorialPremuti.Count == 0) tempoUltimoRilascio = Time.time;
+
+            if (sfidaAttuale == 6) ValutaPassoSospesoRilascio(nota);
+            else if (sfidaAttuale == 10) ValutaToccoVellutatoRilascio();
+            tempoPressione.Remove(nota);
         }
     }
 
-    private IEnumerator TransizioneSfidaCoroutine(int prossimaSfida, string testoNuovaSfida)
+    // --- SFIDE DI LIVELLO MEDIO ---
+
+    // Eco dinamico: 4 note forti, poi le stesse 4 note piano, nello stesso ordine.
+    private void ValutaEcoDinamico(int nota, float velocity, float ora)
+    {
+        if (tempiSequenza.Count > 0 && ora - tempiSequenza[tempiSequenza.Count - 1] > PAUSA_RIPARTENZA)
+        {
+            noteSequenza.Clear();
+            tempiSequenza.Clear();
+            faseSfida = 0;
+            contatoreSfida = 0;
+        }
+
+        if (faseSfida == 0)
+        {
+            if (velocity < SOGLIA_FORTE)
+            {
+                // Una nota piano prima di iniziare non conta; a meta' frase e' un errore.
+                if (noteSequenza.Count > 0) ErroreSfida("Errore: la prima volta suona forte!");
+                return;
+            }
+            noteSequenza.Add(nota);
+            tempiSequenza.Add(ora);
+            if (noteSequenza.Count == 4)
+            {
+                faseSfida = 1;
+                contatoreSfida = 0;
+            }
+            return;
+        }
+
+        tempiSequenza.Add(ora);
+        if (nota != noteSequenza[contatoreSfida])
+        {
+            ErroreSfida("Errore: ripeti le stesse 4 note!");
+        }
+        else if (velocity > SOGLIA_PIANO)
+        {
+            ErroreSfida("Errore: la ripetizione va suonata piano!");
+        }
+        else
+        {
+            contatoreSfida++;
+            if (contatoreSfida == 4) CompletaSfida();
+        }
+    }
+
+    // Passo sospeso: prime due note legate, ultime due staccate.
+    // faseSfida: 0 attesa prima nota, 1 attesa seconda (legata), 2 attesa terza,
+    // 3 attesa quarta, 4 attesa rilascio della quarta.
+    private void ValutaPassoSospesoPressione(bool sovrapposta)
+    {
+        switch (faseSfida)
+        {
+            case 0:
+                faseSfida = 1;
+                break;
+            case 1:
+                if (sovrapposta) faseSfida = 2;
+                else ErroreSfida("Errore: le prime due note vanno legate!");
+                break;
+            case 2:
+            case 3:
+                if (sovrapposta) ErroreSfida("Errore: le ultime due note vanno staccate!");
+                else faseSfida++;
+                break;
+        }
+    }
+
+    private void ValutaPassoSospesoRilascio(int nota)
+    {
+        if (faseSfida < 3) return;
+        if (tempoPressione.TryGetValue(nota, out float premuta) && Time.time - premuta > DURATA_MAX_STACCATO_MEDIO)
+        {
+            ErroreSfida("Errore: tocco troppo lungo, deve essere staccato!");
+            return;
+        }
+        if (faseSfida == 4 && tastiTutorialPremuti.Count == 0) CompletaSfida();
+    }
+
+    // Accento sulla prima: due gruppi di 4 note, la prima di ogni gruppo piu' forte.
+    private void ValutaAccento(float velocity, float ora)
+    {
+        if (tempiSequenza.Count > 0 && ora - tempiSequenza[tempiSequenza.Count - 1] > PAUSA_RIPARTENZA)
+        {
+            velocitaSequenza.Clear();
+            contatoreSfida = 0;
+        }
+        tempiSequenza.Add(ora);
+        velocitaSequenza.Add(velocity);
+        if (velocitaSequenza.Count < 4) return;
+
+        float prima = velocitaSequenza[0];
+        float altre = Mathf.Max(velocitaSequenza[1], Mathf.Max(velocitaSequenza[2], velocitaSequenza[3]));
+        velocitaSequenza.Clear();
+        if (prima >= altre + SCARTO_ACCENTO)
+        {
+            contatoreSfida++;
+            if (contatoreSfida >= 2) CompletaSfida();
+        }
+        else
+        {
+            ErroreSfida("Errore: la prima nota di ogni gruppo va suonata pi\u00F9 decisa!");
+        }
+    }
+
+    // --- SFIDE DI LIVELLO DIFFICILE ---
+
+    // Il sospiro: 5 note con gli intervalli che si allungano verso la fine.
+    private void ValutaSospiro(float ora)
+    {
+        if (tempiSequenza.Count > 0 && ora - tempiSequenza[tempiSequenza.Count - 1] > PAUSA_RIPARTENZA)
+            tempiSequenza.Clear();
+        tempiSequenza.Add(ora);
+        if (tempiSequenza.Count < 5) return;
+
+        float d1 = tempiSequenza[1] - tempiSequenza[0];
+        float d2 = tempiSequenza[2] - tempiSequenza[1];
+        float d3 = tempiSequenza[3] - tempiSequenza[2];
+        float d4 = tempiSequenza[4] - tempiSequenza[3];
+        tempiSequenza.Clear();
+
+        // L'ultimo passo e' chiaramente piu' lungo del primo e la frase non accelera
+        // proprio alla fine: un rallentando, anche leggero.
+        bool rallenta = d4 >= d1 * 1.25f && d4 > d3 && d3 >= d2 * 0.9f;
+        if (rallenta) CompletaSfida();
+        else ErroreSfida("Errore: rallenta un poco verso la fine della frase!");
+    }
+
+    // Il canto in primo piano: due accordi di due note con la nota alta piu' forte.
+    private void ValutaCantoPrimoPiano(int nota, float velocity, float ora)
+    {
+        if (notaInAttesa == -1 || nota == notaInAttesa || ora - tempoInAttesa > FINESTRA_ACCORDO)
+        {
+            // Prima nota di un possibile accordo: aspetta la seconda.
+            notaInAttesa = nota;
+            velocitaInAttesa = velocity;
+            tempoInAttesa = ora;
+            return;
+        }
+
+        float velocitaAlta = nota > notaInAttesa ? velocity : velocitaInAttesa;
+        float velocitaBassa = nota > notaInAttesa ? velocitaInAttesa : velocity;
+        notaInAttesa = -1;
+
+        if (velocitaAlta >= velocitaBassa + SCARTO_VOCE_ALTA)
+        {
+            contatoreSfida++;
+            if (contatoreSfida >= 2) CompletaSfida();
+        }
+        else
+        {
+            ErroreSfida("Errore: la nota pi\u00F9 alta deve suonare pi\u00F9 forte!");
+        }
+    }
+
+    // Il tocco vellutato: 5 note legate, ognuna premuta mentre la precedente e'
+    // ancora giu' (niente vuoti) e lasciata subito dopo (niente accavallamenti).
+    private void ValutaToccoVellutatoPressione(bool sovrapposta)
+    {
+        if (faseSfida == 0)
+        {
+            faseSfida = 1;
+            contatoreSfida = 0;
+            return;
+        }
+        if (!sovrapposta)
+        {
+            ErroreSfida("Errore: c'\u00E8 un vuoto tra le note, legale!");
+            return;
+        }
+        contatoreSfida++;
+        if (contatoreSfida >= 4) CompletaSfida();
+    }
+
+    private void ValutaToccoVellutatoRilascio()
+    {
+        if (faseSfida == 0) return;
+        // La nota appena lasciata si e' accavallata troppo a lungo con quella nuova.
+        float ultimaPressione = -1f;
+        foreach (int tasto in tastiTutorialPremuti)
+        {
+            if (tempoPressione.TryGetValue(tasto, out float t) && t > ultimaPressione) ultimaPressione = t;
+        }
+        if (ultimaPressione > 0f && Time.time - ultimaPressione > SOVRAPPOSIZIONE_MAX_LEGATO)
+            ErroreSfida("Errore: lascia prima la nota precedente!");
+    }
+
+    private void CompletaSfida()
+    {
+        transizioneTutorialCoroutine = StartCoroutine(CompletaSfidaCoroutine());
+    }
+
+    private void ErroreSfida(string messaggio)
+    {
+        transizioneTutorialCoroutine = StartCoroutine(TransizioneErroreCoroutine(messaggio, DescrizioneSfida(sfidaAttuale)));
+    }
+
+    // Sfida superata: parte la successiva del livello. Dopo l'ultima il livello e'
+    // completato, si torna al menu delle difficolta' e il livello riparte da capo.
+    private IEnumerator CompletaSfidaCoroutine()
     {
         inTransizione = true;
+        int livello = livelloAttuale;
+        bool fineLivello = false;
+        if (livello >= 0)
+        {
+            int prossima = prossimaSfidaLivello[livello] + 1;
+            fineLivello = prossima >= SfideLivelli[livello].Length;
+            prossimaSfidaLivello[livello] = fineLivello ? 0 : prossima;
+            if (fineLivello) livelloCompletato[livello] = true;
+        }
+
         // Sopra il pannello Steel Blue il verde/rosso di prima nonavevano contrasto
         // (1.29:1 e 1.12:1): restano bianchi in grassetto e a distinguerli basta
         // la parola scritta.
-        if (tutorialText != null) tutorialText.text = $"<color=#{Hex(SuccessoTutorial)}><b>COMPLETATO!</b></color>\n\nOttimo lavoro! Preparati per la prossima sfida...";
+        if (tutorialText != null)
+        {
+            tutorialText.text = fineLivello
+                ? $"<color=#{Hex(SuccessoTutorial)}><b>ECCELLENTE, LIVELLO {NomiLivelli[livello].ToUpper()} COMPLETATO!</b></color>\n\nTorni alla scelta della difficolt\u00E0..."
+                : $"<color=#{Hex(SuccessoTutorial)}><b>COMPLETATO!</b></color>\n\nOttimo lavoro! Preparati per la prossima sfida...";
+        }
 
-        yield return new WaitForSeconds(2.5f);
+        yield return new WaitForSeconds(fineLivello ? 3.5f : 2.5f);
 
+        transizioneTutorialCoroutine = null;
+        if (fineLivello || livello < 0)
+        {
+            MostraMenuDifficolta();
+            yield break;
+        }
+
+        // Si resta nel livello: parte subito la sfida successiva, con il suo esempio.
+        int sfida = SfideLivelli[livello][prossimaSfidaLivello[livello]];
         if (tutorialCoroutine != null) StopCoroutine(tutorialCoroutine);
-        tutorialCoroutine = StartCoroutine(AvviaSfidaConEsempio(prossimaSfida, testoNuovaSfida));
-        yield return tutorialCoroutine;
-        tutorialCoroutine = null;
+        tutorialCoroutine = StartCoroutine(AvviaSfidaConEsempio(sfida, DescrizioneSfida(sfida)));
     }
 
     private IEnumerator TransizioneErroreCoroutine(string messaggioErrore, string testoSfidaDaRipristinare)
@@ -2160,21 +2653,6 @@ public class GameManager : MonoBehaviour
         PreparaSfidaPerLUtente();
 
         if (tutorialText != null) tutorialText.text = testoSfidaDaRipristinare;
-        inTransizione = false;
-    }
-
-    private IEnumerator FineTutorialCoroutine()
-    {
-        inTransizione = true;
-        sfidaAttuale = 0;
-        tastiTutorialPremuti.Clear();
-        primaNotaStaccato = -1;
-        noteScalaCrescente = 0;
-        tempoUltimaNotaScala = -1f;
-        if (tutorialText != null) tutorialText.text = $"<color=#{Hex(SuccessoTutorial)}><b>ECCELLENTE, TUTORIAL COMPLETATO!</b></color>\n \n Ora verrai reindirizzato al men\u00F9...";
-
-        yield return new WaitForSeconds(3.5f);
-        AttivaMenu();
         inTransizione = false;
     }
 }

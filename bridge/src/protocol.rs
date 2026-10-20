@@ -24,13 +24,42 @@ pub enum Hand {
     Right,
 }
 
-/// The four tutorial demonstrations.
+/// The tutorial demonstrations, numbered as Unity sends them (`sfida`).
+///
+/// 1-4 are the easy level, 5-7 the medium one and 8-10 the hard one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Challenge {
     SoftTouch = 1,
     Crescendo = 2,
     Staccato = 3,
     Legato = 4,
+    /// Four notes loud, then the same four soft.
+    DynamicEcho = 5,
+    /// Two notes legato, then two staccato.
+    LegatoThenStaccato = 6,
+    /// Groups of four with the first note accented.
+    FirstBeatAccent = 7,
+    /// A short melody that slows down at the end.
+    Ritardando = 8,
+    /// Two-note chords with the top note louder.
+    TopVoice = 9,
+    /// A long, smooth legato line.
+    Cantabile = 10,
+}
+
+impl Challenge {
+    pub const ALL: [Self; 10] = [
+        Self::SoftTouch,
+        Self::Crescendo,
+        Self::Staccato,
+        Self::Legato,
+        Self::DynamicEcho,
+        Self::LegatoThenStaccato,
+        Self::FirstBeatAccent,
+        Self::Ritardando,
+        Self::TopVoice,
+        Self::Cantabile,
+    ];
 }
 
 /// A command sent by Unity.
@@ -146,6 +175,12 @@ fn challenge(object: &Map<String, Value>) -> Option<Challenge> {
         2 => Some(Challenge::Crescendo),
         3 => Some(Challenge::Staccato),
         4 => Some(Challenge::Legato),
+        5 => Some(Challenge::DynamicEcho),
+        6 => Some(Challenge::LegatoThenStaccato),
+        7 => Some(Challenge::FirstBeatAccent),
+        8 => Some(Challenge::Ritardando),
+        9 => Some(Challenge::TopVoice),
+        10 => Some(Challenge::Cantabile),
         _ => None,
     }
 }
@@ -697,7 +732,14 @@ mod tests {
             ex(r#"{"action":"play_example","sfida":2.0}"#),
             Some(Command::PlayExample(Challenge::Crescendo))
         );
-        for bad in ["0", "5", "-1", "\"x\"", "null", "2.5"] {
+        for challenge in Challenge::ALL {
+            let json = format!(
+                r#"{{"action":"play_example","sfida":{}}}"#,
+                challenge as i64
+            );
+            assert_eq!(ex(&json), Some(Command::PlayExample(challenge)), "{json}");
+        }
+        for bad in ["0", "11", "-1", "\"x\"", "null", "2.5"] {
             assert_eq!(
                 ex(&format!(r#"{{"action":"play_example","sfida":{bad}}}"#)),
                 None,

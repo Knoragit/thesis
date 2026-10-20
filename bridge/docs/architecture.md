@@ -179,7 +179,11 @@ The user's notes are recorded into the session the whole time, for the report.
 If a song is playing or being followed, the core replies `example_done` straight away. Otherwise a
 demonstration thread plays a fixed script (`core/examples.rs`): press, wait, release, wait. The script
 goes to the piano and to Unity, and ends with `clear_scene` and `example_done`. `stop_example` makes it
-stop at the next note boundary.
+stop at the next point where no key is held.
+
+`sfida` picks the script: 1-4 are the easy tutorial level (soft touch, crescendo, staccato, legato),
+5-7 the medium one (dynamic echo, legato then staccato, first-beat accent) and 8-10 the hard one
+(ritardando, louder top voice in two-note chords, cantabile legato line).
 
 ### The song library (`list_songs`, `search_suggest`)
 

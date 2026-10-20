@@ -2,6 +2,9 @@
 //!
 //! Each challenge shows the user how a gesture should sound, always starting from middle C.
 //! The runtime plays a script on the piano and streams it to Unity.
+//!
+//! A cancel is only noticed at a [`Step::Checkpoint`], and checkpoints are only placed where no
+//! key is held, so a cancelled demo never leaves a note sounding.
 
 use std::time::Duration;
 
@@ -12,6 +15,8 @@ const C4: u8 = 60;
 const D4: u8 = 62;
 const E4: u8 = 64;
 const F4: u8 = 65;
+const G4: u8 = 67;
+const A4: u8 = 69;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
@@ -49,6 +54,51 @@ fn note(note: u8, velocity: f64, hold: u64, pause: u64) -> [Step; 5] {
             unity_velocity: velocity,
         },
         Step::Wait(ms(pause)),
+    ]
+}
+
+fn press(note: u8, velocity: f64) -> Step {
+    Step::Press {
+        note,
+        unity_velocity: velocity,
+        midi_velocity: (velocity * 127.0) as u8,
+    }
+}
+
+fn release(note: u8, velocity: f64) -> Step {
+    Step::Release {
+        note,
+        unity_velocity: velocity,
+    }
+}
+
+/// A line of notes where each one starts `overlap` ms before the previous one is released.
+fn legato_line(notes: &[u8], velocity: f64, hold: u64, overlap: u64) -> Vec<Step> {
+    let mut steps = vec![Step::Checkpoint];
+    for (i, &current) in notes.iter().enumerate() {
+        steps.push(press(current, velocity));
+        if i > 0 {
+            steps.push(Step::Wait(ms(overlap)));
+            steps.push(release(notes[i - 1], velocity));
+        }
+        steps.push(Step::Wait(ms(hold - overlap)));
+    }
+    steps.push(Step::Wait(ms(overlap)));
+    steps.push(release(notes[notes.len() - 1], velocity));
+    steps.push(Step::Wait(ms(100)));
+    steps
+}
+
+/// Two notes struck together, the top one louder, held for `hold`.
+fn dyad(low: u8, high: u8, low_velocity: f64, high_velocity: f64, hold: u64) -> Vec<Step> {
+    vec![
+        Step::Checkpoint,
+        press(low, low_velocity),
+        press(high, high_velocity),
+        Step::Wait(ms(hold)),
+        release(low, low_velocity),
+        release(high, high_velocity),
+        Step::Wait(ms(350)),
     ]
 }
 
@@ -91,6 +141,65 @@ pub fn script(challenge: Challenge) -> Vec<Step> {
                 Step::Wait(ms(100)),
             ]
         }
+        // Dynamic echo: C D E F loud, a breath, then the same four soft.
+        Challenge::DynamicEcho => {
+            let line = |velocity, pause_after_last| {
+                [
+                    note(C4, velocity, 280, 120),
+                    note(D4, velocity, 280, 120),
+                    note(E4, velocity, 280, 120),
+                    note(F4, velocity, 280, pause_after_last),
+                ]
+                .concat()
+            };
+            [line(0.8, 600), line(0.2, 100)].concat()
+        }
+        // Legato then staccato: C and D joined, then E and F short and apart.
+        Challenge::LegatoThenStaccato => [
+            vec![
+                Step::Checkpoint,
+                press(C4, 0.5),
+                Step::Wait(ms(450)),
+                press(D4, 0.5),
+                Step::Wait(ms(80)),
+                release(C4, 0.5),
+                Step::Wait(ms(420)),
+                release(D4, 0.5),
+                Step::Wait(ms(400)),
+            ],
+            note(E4, 0.5, 150, 350).to_vec(),
+            note(F4, 0.5, 150, 100).to_vec(),
+        ]
+        .concat(),
+        // First-beat accent: two bars of C D E F, the C of each bar clearly louder.
+        Challenge::FirstBeatAccent => {
+            let bar = [
+                note(C4, 0.8, 250, 150),
+                note(D4, 0.35, 250, 150),
+                note(E4, 0.35, 250, 150),
+                note(F4, 0.35, 250, 150),
+            ]
+            .concat();
+            [bar.clone(), bar].concat()
+        }
+        // Ritardando: C D E F G, the gaps growing towards the end like a sigh.
+        Challenge::Ritardando => [
+            note(C4, 0.5, 300, 100),
+            note(D4, 0.5, 300, 100),
+            note(E4, 0.5, 350, 150),
+            note(F4, 0.5, 450, 250),
+            note(G4, 0.5, 900, 100),
+        ]
+        .concat(),
+        // Top voice: C+E, D+F, E+G with the upper note brighter.
+        Challenge::TopVoice => [
+            dyad(C4, E4, 0.3, 0.7, 700),
+            dyad(D4, F4, 0.3, 0.7, 700),
+            dyad(E4, G4, 0.3, 0.7, 700),
+        ]
+        .concat(),
+        // Cantabile: C D E F G A, every note joined to the next with a short overlap.
+        Challenge::Cantabile => legato_line(&[C4, D4, E4, F4, G4, A4], 0.45, 450, 60),
     }
 }
 
@@ -117,6 +226,14 @@ mod tests {
         assert_eq!(total(&script(Challenge::Crescendo)), ms(3 * 750 + 450));
         assert_eq!(total(&script(Challenge::Staccato)), ms(830));
         assert_eq!(total(&script(Challenge::Legato)), ms(1650));
+    }
+
+    #[test]
+    fn every_demo_ends_before_unity_retries() {
+        // Unity sends play_example again if example_done has not arrived after 7 s.
+        for challenge in Challenge::ALL {
+            assert!(total(&script(challenge)) < ms(6000), "{challenge:?}");
+        }
     }
 
     #[test]
@@ -147,22 +264,50 @@ mod tests {
     }
 
     #[test]
-    fn every_pressed_note_is_released() {
-        for challenge in [
-            Challenge::SoftTouch,
-            Challenge::Crescendo,
-            Challenge::Staccato,
-            Challenge::Legato,
-        ] {
+    fn every_pressed_note_is_released_and_no_checkpoint_leaves_one_held() {
+        for challenge in Challenge::ALL {
             let mut held = Vec::new();
             for step in script(challenge) {
                 match step {
                     Step::Press { note, .. } => held.push(note),
                     Step::Release { note, .. } => held.retain(|n| *n != note),
-                    _ => {}
+                    Step::Checkpoint => assert!(held.is_empty(), "{challenge:?}"),
+                    Step::Wait(_) => {}
                 }
             }
             assert!(held.is_empty(), "{challenge:?}");
+        }
+    }
+
+    #[test]
+    fn the_new_demos_show_what_they_teach() {
+        let presses = |challenge| -> Vec<(u8, f64)> {
+            script(challenge)
+                .into_iter()
+                .filter_map(|s| match s {
+                    Step::Press {
+                        note,
+                        unity_velocity,
+                        ..
+                    } => Some((note, unity_velocity)),
+                    _ => None,
+                })
+                .collect()
+        };
+        // The echo repeats the same notes, loud then soft.
+        let echo = presses(Challenge::DynamicEcho);
+        assert_eq!(echo.len(), 8);
+        for i in 0..4 {
+            assert_eq!(echo[i].0, echo[i + 4].0);
+            assert!(echo[i].1 > echo[i + 4].1);
+        }
+        // The accent falls on the first note of every group of four.
+        for group in presses(Challenge::FirstBeatAccent).chunks(4) {
+            assert!(group[1..].iter().all(|(_, v)| *v < group[0].1));
+        }
+        // The upper note of each chord is the louder one.
+        for chord in presses(Challenge::TopVoice).chunks(2) {
+            assert!(chord[1].0 > chord[0].0 && chord[1].1 > chord[0].1);
         }
     }
 }

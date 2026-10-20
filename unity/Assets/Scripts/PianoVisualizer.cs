@@ -16,6 +16,26 @@ public class PianoVisualizer : MonoBehaviour
         public bool isLeftHand;
         public float releaseTimer;
         public float pressTimer;
+        public GameObject sferaStaccato;  // Punto sopra la colonna se la nota e' staccato
+    }
+
+    // Una singola pressione: NoteState viene riusato quando lo stesso tasto viene
+    // ribattuto, quindi tempi ed esito dello staccato vanno tenuti a parte.
+    private class Pressione
+    {
+        public NoteState stato;
+        public int nota;
+        public float attacco;
+        public float rilascio = -1f;
+        public bool segueStaccato;   // La nota prima di questa era staccata da lei
+    }
+
+    private class SferaIsolata
+    {
+        public GameObject oggetto;
+        public Material materiale;
+        public float alphaIniziale;
+        public float tempo;
     }
 
     private Dictionary<int, NoteState> activeNotes = new Dictionary<int, NoteState>();
@@ -80,6 +100,21 @@ public class PianoVisualizer : MonoBehaviour
     public float burstIntensita = 28f;
     public float particellaLuminosita = 1.6f;
     public float riempimentoSpacing = 0.008f;
+
+    // Staccato come nella sfida del tutorial: due note in rapida successione,
+    // ciascuna con un tocco breve, separate da una pausa breve e senza altri tasti
+    // premuti. La prima riceve la sfera all'attacco della seconda; la seconda al
+    // proprio rilascio, se anche lei e' breve.
+    [Header("Sfera Staccato")]
+    public float distaccoSferaStaccato = 0.02f;
+    // Se la colonna e' gia' scesa quando lo staccato viene riconosciuto, la sfera
+    // compare da sola sopra il tasto e svanisce in questo tempo.
+    public float durataSferaIsolata = 0.5f;
+    private const float DURATA_MAX_TOCCO_STACCATO = 0.3f;
+    private const float PAUSA_MIN_STACCATO = 0.04f;
+    private const float PAUSA_MAX_STACCATO = 0.5f;
+    private Pressione ultimaPressione;
+    private readonly List<SferaIsolata> sfereIsolate = new List<SferaIsolata>();
 
     [Header("Impostazioni Nomi Note")]
     public bool usaNotazioneItaliana = true; // true = Do, Re, Mi | false = C, D, E
@@ -167,6 +202,9 @@ public class PianoVisualizer : MonoBehaviour
             }
         }
         activeNotes.Clear();
+        ultimaPressione = null;
+        foreach (var sfera in sfereIsolate) DistruggiSferaIsolata(sfera);
+        sfereIsolate.Clear();
         if (leftLineRenderer != null) leftLineRenderer.positionCount = 0;
         if (rightLineRenderer != null) rightLineRenderer.positionCount = 0;
         if (leftHaloRenderer != null) leftHaloRenderer.positionCount = 0;
@@ -277,10 +315,17 @@ public class PianoVisualizer : MonoBehaviour
                 {
                     AggiornaShapeParticelle(state, kvp.Key, state.currentHeight);
                 }
+
+                if (state.sferaStaccato != null && state.sferaStaccato.activeSelf)
+                {
+                    state.sferaStaccato.transform.localPosition = new Vector3(0f, state.currentHeight + distaccoSferaStaccato + spessore * 0.5f, 0f);
+                }
             }
         }
 
         foreach (int id in toRemove) activeNotes.Remove(id);
+
+        AggiornaSfereIsolate();
 
         DisegnaFiloGravitazionale(true, leftLineRenderer, leftHaloRenderer);
         DisegnaFiloGravitazionale(false, rightLineRenderer, rightHaloRenderer);
@@ -312,8 +357,19 @@ public class PianoVisualizer : MonoBehaviour
                 st.pressTimer = 0f;
                 if (st.particles != null) st.particles.Stop();
             }
+            RegistraRilascio(note);
             return;
         }
+
+        // Lo staccato della nota precedente si decide ora che arriva questa. La
+        // sfera di questa colonna si spegne prima, perche' riguardava la pressione
+        // precedente: se era lo stesso tasto ribattuto staccato si riaccende subito.
+        float adesso = Time.time;
+        bool staccatoDallaPrecedente = PrecedenteStaccata(note, adesso);
+        NoteState esistente;
+        if (activeNotes.TryGetValue(note, out esistente) && esistente.sferaStaccato != null)
+            esistente.sferaStaccato.SetActive(false);
+        if (staccatoDallaPrecedente) MostraSferaStaccato(ultimaPressione);
 
         if (!activeNotes.ContainsKey(note))
         {
@@ -340,6 +396,7 @@ public class PianoVisualizer : MonoBehaviour
         state.isPressed = true;
         state.releaseTimer = 0f;
         state.pressTimer = 0f;
+        ultimaPressione = new Pressione { stato = state, nota = note, attacco = adesso, segueStaccato = staccatoDallaPrecedente };
 
         float altezzaMassimaColonne = 0.6f;
         float velocityCalibrata = velocity;
@@ -373,6 +430,109 @@ public class PianoVisualizer : MonoBehaviour
             int fillVolume = Mathf.Clamp(nx * nx * ny, 1, maxParticlesColonna);
             state.particles.Emit(fillVolume);
         }
+    }
+
+    private bool PrecedenteStaccata(int nota, float adesso)
+    {
+        Pressione p = ultimaPressione;
+        if (p == null || p.rilascio < 0f) return false;
+        if (p.rilascio - p.attacco > DURATA_MAX_TOCCO_STACCATO) return false;
+
+        float pausa = adesso - p.rilascio;
+        if (pausa < PAUSA_MIN_STACCATO || pausa > PAUSA_MAX_STACCATO) return false;
+
+        // Un altro tasto ancora premuto vuol dire note sovrapposte, non staccato.
+        foreach (var kvp in activeNotes)
+        {
+            if (kvp.Key != nota && kvp.Value.isPressed) return false;
+        }
+        return true;
+    }
+
+    private void RegistraRilascio(int nota)
+    {
+        // Vale solo per l'ultima nota attaccata: se nel frattempo ne e' arrivata
+        // un'altra, questa e' gia' stata valutata (o era sovrapposta).
+        Pressione p = ultimaPressione;
+        if (p == null || p.nota != nota || p.rilascio >= 0f) return;
+
+        p.rilascio = Time.time;
+        if (p.segueStaccato && p.rilascio - p.attacco <= DURATA_MAX_TOCCO_STACCATO)
+            MostraSferaStaccato(p);
+    }
+
+    private void MostraSferaStaccato(Pressione p)
+    {
+        float spessore = IsTastoNero(p.nota) ? 0.009f : 0.016f;
+        NoteState state = p.stato;
+
+        NoteState attuale;
+        bool colonnaPresente = state.rootObject != null && activeNotes.TryGetValue(p.nota, out attuale) && attuale == state;
+        if (!colonnaPresente)
+        {
+            CreaSferaIsolata(p, spessore);
+            return;
+        }
+
+        if (state.sferaStaccato == null)
+        {
+            state.sferaStaccato = CreaSfera(spessore);
+            state.sferaStaccato.transform.SetParent(state.rootObject.transform, false);
+            // Stesso materiale della sagoma: segue anche il colore aggiornato a ogni attacco.
+            state.sferaStaccato.GetComponent<Renderer>().sharedMaterial = state.columnMaterial;
+        }
+
+        state.sferaStaccato.transform.localPosition = new Vector3(0f, state.currentHeight + distaccoSferaStaccato + spessore * 0.5f, 0f);
+        state.sferaStaccato.SetActive(true);
+    }
+
+    private GameObject CreaSfera(float diametro)
+    {
+        GameObject sfera = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        sfera.name = "Sfera_Staccato";
+        Destroy(sfera.GetComponent<SphereCollider>());
+        // La sfera primitiva ha diametro 1: scala = diametro della colonna.
+        sfera.transform.localScale = Vector3.one * diametro;
+        return sfera;
+    }
+
+    private void CreaSferaIsolata(Pressione p, float spessore)
+    {
+        // Il materiale della colonna sopravvive alla sua distruzione (le istanze
+        // di Renderer.material non vengono distrutte con il GameObject).
+        if (p.stato.columnMaterial == null) return;
+
+        GameObject sfera = CreaSfera(spessore);
+        sfera.transform.SetParent(this.transform, false);
+        sfera.transform.localPosition = new Vector3(CalcolaX(p.nota), distaccoSferaStaccato + spessore * 0.5f, 0f);
+
+        Material m = new Material(p.stato.columnMaterial);
+        sfera.GetComponent<Renderer>().sharedMaterial = m;
+        sfereIsolate.Add(new SferaIsolata { oggetto = sfera, materiale = m, alphaIniziale = m.color.a });
+    }
+
+    private void AggiornaSfereIsolate()
+    {
+        for (int i = sfereIsolate.Count - 1; i >= 0; i--)
+        {
+            SferaIsolata sfera = sfereIsolate[i];
+            sfera.tempo += Time.deltaTime;
+            if (sfera.tempo >= durataSferaIsolata)
+            {
+                DistruggiSferaIsolata(sfera);
+                sfereIsolate.RemoveAt(i);
+                continue;
+            }
+            Color c = sfera.materiale.color;
+            c.a = sfera.alphaIniziale * (1f - sfera.tempo / durataSferaIsolata);
+            sfera.materiale.color = c;
+        }
+    }
+
+    private void DistruggiSferaIsolata(SferaIsolata sfera)
+    {
+        if (sfera.oggetto != null) Destroy(sfera.oggetto);
+        if (sfera.materiale != null) Destroy(sfera.materiale);
     }
 
     private void AggiornaShapeParticelle(NoteState state, int nota, float height)

@@ -1,7 +1,8 @@
 //! Observer mode: plays a song on the piano and streams its notes to Unity.
 //!
-//! A song can start part way through, and while it plays Unity is told the position every
-//! [`PROGRESS_EVERY`] so it can draw a timeline the user can drag.
+//! A song can start part way through and stop before its end (follow-me demonstrations), and
+//! while it plays Unity is told the position every [`PROGRESS_EVERY`] so it can draw a timeline
+//! the user can drag.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -12,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use super::services::Services;
 use crate::core::{Input, PlaybackId};
-use crate::midi::{NoteKind, Timeline};
+use crate::midi::{NoteKind, Timeline, analysis};
 use crate::protocol::Event;
 
 const POLL: Duration = Duration::from_millis(1);
@@ -28,7 +29,13 @@ pub struct PlaybackSlot {
 impl PlaybackSlot {
     /// Replaces whatever is playing. The old song is fully wound down first (its "stop" output
     /// is sent before the new song's first message), so two songs never overlap.
-    pub fn start(&mut self, id: PlaybackId, path: PathBuf, start_ms: u64, services: &Services) {
+    pub fn start(
+        &mut self,
+        id: PlaybackId,
+        path: PathBuf,
+        (start_ms, end_ms): (u64, Option<u64>),
+        services: &Services,
+    ) {
         self.cancel();
         if let Some((_, thread)) = self.current.take() {
             let _ = thread.join();
@@ -37,7 +44,14 @@ impl PlaybackSlot {
         let thread = {
             let (cancel, services) = (Arc::clone(&cancel), services.clone());
             thread::spawn(move || {
-                play(&path, Duration::from_millis(start_ms), &cancel, &services);
+                let end = end_ms.map(Duration::from_millis);
+                play(
+                    &path,
+                    Duration::from_millis(start_ms),
+                    end,
+                    &cancel,
+                    &services,
+                );
                 services.wake(Input::PlaybackFinished(id));
             })
         };
@@ -67,9 +81,17 @@ fn wait_until(target: Instant, cancel: &AtomicBool) -> bool {
     }
 }
 
-fn play(path: &Path, start: Duration, cancel: &AtomicBool, services: &Services) {
+fn play(
+    path: &Path,
+    start: Duration,
+    end: Option<Duration>,
+    cancel: &AtomicBool,
+    services: &Services,
+) {
+    // Only the piano part is played (and shown): the other instruments and the drums of a
+    // band arrangement are left out.
     let timeline = match Timeline::load(path) {
-        Ok(timeline) => timeline,
+        Ok(timeline) => analysis::piano_part(&timeline),
         Err(error) => {
             tracing::warn!(%error, file = %path.display(), "cannot play song");
             services.unity.send(&Event::PlayError(
@@ -80,7 +102,9 @@ fn play(path: &Path, start: Duration, cancel: &AtomicBool, services: &Services) 
     };
     let duration = timeline.length();
     let start = start.as_secs_f64().min(duration);
-    tracing::info!(file = %path.display(), start, "playing");
+    // Where playback stops: the end of the song unless asked to stop earlier.
+    let stop = end.map_or(duration, |end| end.as_secs_f64().clamp(start, duration));
+    tracing::info!(file = %path.display(), start, stop, "playing");
 
     services.piano.all_notes_off();
     services.unity.send(&Event::ClearScene);
@@ -130,6 +154,14 @@ fn play(path: &Path, start: Duration, cancel: &AtomicBool, services: &Services) 
         {
             continue;
         }
+        // Stopping early: notes released right on the boundary still are, then the rest of the
+        // stretch is waited out and the song ends as usual.
+        let release_on_boundary =
+            clock - stop < 1e-6 && key.is_some_and(|(_, note)| note.kind == NoteKind::Release);
+        if clock >= stop && stop < duration && !release_on_boundary {
+            finished = wait_until(origin + Duration::from_secs_f64(stop - start), cancel);
+            break;
+        }
         let target = origin + Duration::from_secs_f64(clock - start);
         // Long rests are waited out in slices, so the position keeps moving in Unity.
         while next_progress < target {
@@ -153,7 +185,7 @@ fn play(path: &Path, start: Duration, cancel: &AtomicBool, services: &Services) 
     }
     if finished {
         services.unity.send(&Event::SongProgress {
-            position: round_ms(duration),
+            position: round_ms(stop),
             duration: round_ms(duration),
         });
     }
@@ -248,7 +280,7 @@ mod tests {
         let rig = rig();
         let path = rig.song("a.mid", &[60]);
         let mut slot = PlaybackSlot::default();
-        slot.start(7, path, 0, &rig.services);
+        slot.start(7, path, (0, None), &rig.services);
 
         assert_eq!(rig.next_datagram(), CLEAR_SCENE);
         assert!(rig.next_datagram().ends_with(r#""action": "press"}"#));
@@ -269,7 +301,7 @@ mod tests {
         // One beat (0.5 s) each: 60 from 0.0, 62 from 0.5, 64 from 1.0; 1.5 s in all.
         let path = rig.song("abc.mid", &[60, 62, 64]);
         let mut slot = PlaybackSlot::default();
-        slot.start(4, path, 600, &rig.services);
+        slot.start(4, path, (600, None), &rig.services);
 
         assert_eq!(rig.next_datagram_or_progress(), CLEAR_SCENE);
         assert_eq!(
@@ -300,11 +332,46 @@ mod tests {
     }
 
     #[test]
+    fn a_song_can_stop_early_after_waiting_out_the_stretch() {
+        let rig = rig();
+        // 60 from 0.0, 62 from 0.5, 64 from 1.0: stop at 1.0, so only 62 is played.
+        let path = rig.song("abc.mid", &[60, 62, 64]);
+        let mut slot = PlaybackSlot::default();
+        let started = Instant::now();
+        slot.start(5, path, (500, Some(1000)), &rig.services);
+
+        let mut seen = Vec::new();
+        assert_eq!(rig.next_datagram_or_progress(), CLEAR_SCENE);
+        loop {
+            let datagram = rig.next_datagram_or_progress();
+            if datagram == CLEAR_SCENE {
+                break;
+            }
+            seen.push(datagram);
+        }
+        assert!(started.elapsed() >= Duration::from_millis(450));
+        let notes: Vec<_> = seen.iter().filter(|d| d.contains("\"note\"")).collect();
+        assert_eq!(notes.len(), 2, "{seen:?}");
+        assert!(notes.iter().all(|d| d.contains("\"note\": 62")), "{seen:?}");
+        assert_eq!(
+            seen.last().unwrap(),
+            r#"{"action": "song_progress", "position": 1.0, "duration": 1.5}"#
+        );
+        assert!(matches!(
+            rig.wakes
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .input,
+            Input::PlaybackFinished(5)
+        ));
+    }
+
+    #[test]
     fn cancelling_stops_quickly_and_still_silences_the_piano() {
         let rig = rig();
         let path = rig.song("long.mid", &[60; 40]); // 20 s
         let mut slot = PlaybackSlot::default();
-        slot.start(1, path, 0, &rig.services);
+        slot.start(1, path, (0, None), &rig.services);
         assert_eq!(rig.next_datagram(), CLEAR_SCENE);
 
         let cancelled_at = Instant::now();
@@ -333,9 +400,9 @@ mod tests {
         let first = rig.song("a.mid", &[60; 40]);
         let second = rig.song("b.mid", &[72]);
         let mut slot = PlaybackSlot::default();
-        slot.start(1, first, 0, &rig.services);
+        slot.start(1, first, (0, None), &rig.services);
         assert_eq!(rig.next_datagram(), CLEAR_SCENE);
-        slot.start(2, second, 0, &rig.services);
+        slot.start(2, second, (0, None), &rig.services);
 
         // Read until the new song has finished (it ends with its own clear_scene).
         let mut seen = Vec::new();
@@ -380,7 +447,7 @@ mod tests {
         let path = rig.dir.path().join("bad.mid");
         std::fs::write(&path, b"nope").unwrap();
         let mut slot = PlaybackSlot::default();
-        slot.start(3, path, 0, &rig.services);
+        slot.start(3, path, (0, None), &rig.services);
         assert!(rig.next_datagram().contains("play_result"));
         assert!(matches!(
             rig.wakes

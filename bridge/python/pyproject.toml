@@ -12,6 +12,7 @@ dependencies = [
 [project.scripts]
 report-renderer = "bridge_tools.report.cli:main"
 song-search = "bridge_tools.search.cli:main"
+score-renderer = "bridge_tools.score.cli:main"
 
 [dependency-groups]
 dev = [

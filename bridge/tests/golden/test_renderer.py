@@ -32,6 +32,8 @@ def render(case: str, out_dir: Path) -> dict:
         input=(DATA / case / "input.json").read_text(),
         capture_output=True,
         text=True,
+        # The originals had no score pages: engraving stays off.
+        env={**os.environ, "MIDI_BRIDGE_MUSESCORE": ""},
         check=False,
     )
     assert result.returncode == 0, result.stderr

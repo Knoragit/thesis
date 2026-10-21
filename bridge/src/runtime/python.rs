@@ -139,6 +139,21 @@ impl PythonTools {
         Ok(parsed.pages)
     }
 
+    /// Engraves the score of `midi` into `out_dir`, timing its pages by `bars` (a JSON list of
+    /// bar start times); returns the number of pages.
+    pub fn render_score(&self, midi: &Path, bars: &Path, out_dir: &Path) -> Result<u32, ToolError> {
+        let (midi, bars) = (midi.to_string_lossy(), bars.to_string_lossy());
+        let out_dir = out_dir.to_string_lossy();
+        let stdout = self.run(
+            "score-renderer",
+            &["--midi", &midi, "--bars", &bars, "--out-dir", &out_dir],
+            b"",
+        )?;
+        let parsed: RenderOutput = serde_json::from_slice(&stdout)
+            .map_err(|e| ToolError::BadOutput(e, "score-renderer"))?;
+        Ok(parsed.pages)
+    }
+
     /// Looks for songs online and downloads them into `dest`, in the order the site ranks them.
     pub fn search(
         &self,

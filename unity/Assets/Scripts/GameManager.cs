@@ -109,6 +109,11 @@ public class GameManager : MonoBehaviour
     // Gestione Note per la modalità "Seguimi"
     private List<int> expectedNotes = new List<int>();
     private HashSet<int> userPressedNotes = new HashSet<int>();
+    // Tasti premuti dopo che l'accordo atteso e' comparso (e ancora giu'): solo
+    // questi lo completano. Con i tasti ancora tenuti dall'accordo prima, un
+    // accordo ripetuto risultava gia' suonato e si saltava a catena fino alla
+    // dimostrazione del turno successivo.
+    private HashSet<int> notePremuteDopoAttesa = new HashSet<int>();
 
     private bool inTransizione = false;
     private Coroutine faiTuBannerCoroutine;
@@ -119,6 +124,10 @@ public class GameManager : MonoBehaviour
     private GameObject bannerModalita;
     private TextMeshProUGUI bannerModalitaTesto;
     private Coroutine bannerModalitaCoroutine;
+    // Seguimi: prima del brano, il pannello avvisa che il bridge suona per primo.
+    private Coroutine avvioSeguimiCoroutine;
+    private const string TESTO_AVVIO_SEGUIMI = "Riproduco le prime note e poi tocca a te!";
+    private const float DURATA_AVVISO_SEGUIMI = 3f;
     // Visualizzatore PDF del report: creato a runtime sotto il Canvas, con le
     // pagine salvate in PNG dal bridge nella cartella sessione (app e bridge
     // girano sulla stessa macchina via Link). Vive anche lui fuori dai gruppi,
@@ -925,6 +934,7 @@ public class GameManager : MonoBehaviour
         // Reset tracciamento note seguimi
         expectedNotes.Clear();
         userPressedNotes.Clear();
+        notePremuteDopoAttesa.Clear();
 
         // Gestione uscite dagli stati precedenti
         if ((statoAttuale == AppState.Osservatore || statoAttuale == AppState.Seguimi) && udpReceiver != null)
@@ -962,6 +972,7 @@ public class GameManager : MonoBehaviour
 
         if (faiTuBannerCoroutine != null) StopCoroutine(faiTuBannerCoroutine);
         if (reportFeedbackCoroutine != null) StopCoroutine(reportFeedbackCoroutine);
+        AnnullaAvvioSeguimi();
         NascondiBannerModalita();
         NascondiViewerReport();
 
@@ -1457,6 +1468,33 @@ public class GameManager : MonoBehaviour
         bannerModalita.transform.SetAsLastSibling();
     }
 
+    // Seguimi a turni: mostra il pannello per qualche secondo, poi fa partire il
+    // brano (avvio manda "play_song_follow"). Un nuovo brano sostituisce l'avviso.
+    public void AvviaSeguimiConAvviso(System.Action avvio)
+    {
+        AnnullaAvvioSeguimi();
+        avvioSeguimiCoroutine = StartCoroutine(AvvisoSeguimiPoiAvvia(avvio));
+    }
+
+    // Brano fermato o modalita' cambiata durante l'avviso: il brano non parte.
+    public void AnnullaAvvioSeguimi()
+    {
+        if (avvioSeguimiCoroutine == null) return;
+        StopCoroutine(avvioSeguimiCoroutine);
+        avvioSeguimiCoroutine = null;
+        if (bannerModalita != null) bannerModalita.SetActive(false);
+    }
+
+    private IEnumerator AvvisoSeguimiPoiAvvia(System.Action avvio)
+    {
+        MostraBannerReport(TESTO_AVVIO_SEGUIMI);
+        yield return new WaitForSeconds(DURATA_AVVISO_SEGUIMI);
+        if (bannerModalita != null) bannerModalita.SetActive(false);
+        avvioSeguimiCoroutine = null;
+        if (statoAttuale != AppState.Seguimi) yield break;
+        if (avvio != null) avvio();
+    }
+
     private IEnumerator MostraBannerFaiTuTemporaneo()
     {
         if (faiTuBannerMessaggio != null)
@@ -1671,6 +1709,16 @@ public class GameManager : MonoBehaviour
 
     private void PulisciScena()
     {
+        // Seguimi a turni: la dimostrazione finisce con un clear_scene e le note
+        // ancora tenute non ricevono il loro "release". Senza azzerarle, una nota
+        // della dimostrazione risulterebbe premuta nel turno dell'utente.
+        if (statoAttuale == AppState.Seguimi)
+        {
+            userPressedNotes.Clear();
+            notePremuteDopoAttesa.Clear();
+            expectedNotes.Clear();
+        }
+
         PianoVisualizer vis = FindFirstObjectByType<PianoVisualizer>();
         if (vis != null)
         {
@@ -2210,6 +2258,7 @@ public class GameManager : MonoBehaviour
         if (statoAttuale != AppState.Seguimi) return;
 
         expectedNotes.Clear();
+        notePremuteDopoAttesa.Clear();
         if (notes != null && notes.Length > 0)
         {
             expectedNotes.AddRange(notes);
@@ -2231,7 +2280,7 @@ public class GameManager : MonoBehaviour
         bool allMatched = true;
         foreach (int expected in expectedNotes)
         {
-            if (!userPressedNotes.Contains(expected))
+            if (!notePremuteDopoAttesa.Contains(expected))
             {
                 allMatched = false;
                 break;
@@ -2254,12 +2303,14 @@ public class GameManager : MonoBehaviour
         {
             if (action == "press")
             {
-                userPressedNotes.Add(nota);
+                // Un doppio note_on di un tasto gia' giu' non e' una nuova pressione.
+                if (userPressedNotes.Add(nota)) notePremuteDopoAttesa.Add(nota);
                 ControllaNoteSeguimi();
             }
             else if (action == "release")
             {
                 userPressedNotes.Remove(nota);
+                notePremuteDopoAttesa.Remove(nota);
             }
             return;
         }

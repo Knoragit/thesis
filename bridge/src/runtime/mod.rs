@@ -5,6 +5,7 @@ mod examples;
 mod playback;
 mod python;
 mod report;
+mod score;
 mod search;
 mod services;
 mod udp;
@@ -128,8 +129,14 @@ impl Executor<'_> {
     fn execute(&mut self, effect: Effect) {
         match effect {
             Effect::Send(event) => self.services.unity.send(&event),
-            Effect::StartPlayback { id, path, start_ms } => {
-                self.playback.start(id, path, start_ms, self.services);
+            Effect::StartPlayback {
+                id,
+                path,
+                start_ms,
+                end_ms,
+            } => {
+                self.playback
+                    .start(id, path, (start_ms, end_ms), self.services);
             }
             Effect::StopPlayback => self.playback.cancel(),
             Effect::StartExample(challenge) => self.examples.start(challenge, self.services),
@@ -143,6 +150,18 @@ impl Executor<'_> {
             ),
             Effect::Search { query } => {
                 search::spawn(query, &self.config.songs_dir(), self.tools, self.services);
+            }
+            Effect::RenderScore {
+                request,
+                filename,
+                path,
+            } => {
+                let song = score::Song {
+                    request,
+                    filename,
+                    path,
+                };
+                score::spawn(song, &self.config.scores_dir(), self.tools, self.services);
             }
         }
     }

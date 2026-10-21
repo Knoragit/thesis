@@ -25,8 +25,9 @@ The bridge is a single process on the same machine as the Unity app.
 - **Unity** sends commands as small JSON datagrams to port 5006 and listens for events on 5005.
 - **The keyboard** sends note-ons and note-offs. **The piano** (often the same instrument) receives
   the songs and demonstrations the bridge plays.
-- **Two Python programs** are started on demand, one per job: `report-renderer` draws the report,
-  and `song-search` downloads songs from the web. Each one reads its input, writes its output and exits.
+- **Three Python programs** are started on demand, one per job: `report-renderer` draws the report,
+  `score-renderer` engraves sheet music with MuseScore, and `song-search` downloads songs from the
+  web. Each one reads its input, writes its output and exits.
 
 The bridge also owns a **data folder** on disk:
 
@@ -35,11 +36,18 @@ The bridge also owns a **data folder** on disk:
 ├── <db file>                     SQLite: the song library (table midi_files)
 ├── <songs subdir>/               the .mid files
 │   └── ...
+├── <scores subdir>/              engraved scores, one folder per song (a cache)
+│   └── <song name>/
+│       ├── brano.mid             the piano reduction that was engraved
+│       ├── battute.json          when each bar starts, in seconds
+│       ├── pagina_1.png ...      one image per page, which Unity shows
+│       └── score.json            {"pages": N, "page_starts": [seconds, ...]}
 └── <sessions subdir>/
     └── Sessione_YYYYMMDD_HHMMSS/ one folder per report
         ├── <report name>.pdf
         ├── pagina_1.png ...      one image per page, which Unity shows
-        └── Registrazione_Audio.wav
+        ├── Registrazione_Audio.wav
+        ├── Esecuzione_Fai_Tu.mid and spartito_fai_tu_N.png (with MuseScore)
 ```
 
 The names in angle brackets are command-line options. Unity passes the real ones when it launches
@@ -88,6 +96,7 @@ core.handle(input: Input, now: f64, library: &dyn SongLibrary) -> Vec<Effect>
 | `StartPlayback { id, path, start_ms }` / `StopPlayback` | starts or cancels the song player |
 | `StartExample(challenge)` / `StopExample` | starts or cancels a tutorial demonstration |
 | `RenderReport(SessionData)` | starts the report worker |
+| `RenderScore { request, filename, path }` | starts the score worker |
 | `Search { query }` | starts the search worker |
 
 Workers that only *stream* (song playback, demonstrations) send their notes straight to Unity and
@@ -100,8 +109,10 @@ on the event loop's thread.
 `core::Core` holds:
 
 - **`playback`**: which song (by playback id) is playing, if any.
-- **`follow`** (`core/follow.rs`): the chords of the song being followed, the cursor into them, the
-  keys currently held, and every follow-me session played so far with the user's notes.
+- **`follow`** (`core/follow.rs`): the chords of the song being followed (with their start times),
+  the cursor into them, the turns when following in turns, the keys currently held, and every
+  follow-me session played so far with the user's notes.
+- **`demo`**: which playback is demonstrating a follow-me turn, if any.
 - **`recorder`** (`core/recorder.rs`): whether free play is being recorded, the keys currently held,
   the completed notes, and the latest left/right-hand hint for each key.
 - **report bookkeeping**: when the last report was requested, and whether one is being rendered.
@@ -115,7 +126,9 @@ used later.
 
 1. Create the songs and sessions folders if needed.
 2. Open the SQLite library (creating or migrating the table) and **scan** the songs folder. Every
-   `.mid` file that is safe for the visualizer is registered.
+   `.mid` file that is safe for the visualizer is registered. A song with less than 10% of its
+   notes on a piano (`analysis::has_enough_piano`) is moved to the `Scartate` subfolder of the
+   songs folder and removed from the database.
 3. Open the MIDI output (the piano) and bind UDP port 5006. If the port is taken, exit with an error.
 4. Connect the MIDI input (the keyboard), start the UDP receiver, and send `bridge_ready` to Unity.
 5. Start `uv sync` in the background so the Python tools are installed before they are needed.
@@ -147,6 +160,9 @@ sent earlier with `note_hand`, if there was one.
 4. The playback thread (`runtime/playback.rs`):
    - reads the file into a **timeline** (`midi/timeline.rs`): all tracks merged into one list of
      messages, each with the delay before it, in seconds, tempo changes applied;
+   - keeps only the **piano part** (`analysis::piano_part`): the channels whose current program
+     is a piano (0-7, the default), never the drum channel 10. A song with no piano keeps every
+     instrument but the drums; one with only drums is kept whole;
    - silences the piano (all-notes-off on the 16 channels) and sends `clear_scene`;
    - if `play_song` carried a `start` (seconds), skips everything before it: skipped notes (and the
      releases of notes pressed before `start`) are dropped, while every other message (pedals,
@@ -165,7 +181,8 @@ sent earlier with `note_hand`, if there was one.
 ### Following a song ("Seguimi", `play_song_follow` / `next_step`)
 
 1. The core finds the file (as above) and asks the library for its **reference notes**: every
-   note-on paired with its note-off, with start time and duration, in time order (`midi/analysis.rs`).
+   note-on of the piano part (as above) paired with its note-off, with start time and duration, in
+   time order (`midi/analysis.rs`).
 2. The notes are grouped into **chords**: a note joins the current chord if it starts within 50 ms of
    the previous note.
 3. A new follow session is recorded, and the first chord goes out as `expect_notes`.
@@ -173,6 +190,32 @@ sent earlier with `note_hand`, if there was one.
    sends the next chord. After the last chord it sends `clear_scene` and follow-me ends.
 
 The user's notes are recorded into the session the whole time, for the report.
+
+**In turns** (`play_song_follow` with `demo_bars`, which Unity always sends): the song is split
+into turns of `demo_bars` bars. Bars come from the file's time signatures and tempo changes (4/4
+until one is set; `Timeline::bar_starts`). For each turn that has notes:
+
+1. The core starts a playback of that stretch only (`StartPlayback` with `start_ms` and `end_ms`):
+   the bridge plays it on the piano and streams it to Unity as in the observer mode, waits out the
+   rest of the stretch, then sends `clear_scene`. The user's notes are not recorded meanwhile, and
+   `next_step` is ignored.
+2. When that playback finishes, the core sends the turn's chords one at a time as
+   `expect_notes` with `time` (the chord's start in the song, in seconds), as above.
+3. `next_step` after the turn's last chord starts the next turn's demonstration.
+
+### Sheet music (`get_score`)
+
+Unity asks for the score of the song it starts in follow-me, with a `request` number. The score
+worker (`runtime/score.rs`) reuses the song's folder in the scores folder if it is newer than the
+song and engraved from the same reduction. Otherwise it writes the **piano reduction**
+(`midi/reduction.rs`: the notes of the piano part on two piano tracks, one per hand (`midi/hands.rs`:
+chord by chord, the cheapest cut given where each hand last played, how far a hand reaches and
+a preference for middle C), which MuseScore engraves as treble and bass staff without clef changes, with the original
+tempo, time and key signatures, so it shows what follow-me asks for; each note is stretched to
+the next note of its hand, so a staccato performance does not engrave as a run of rests) and the bar times, then runs `score-renderer`. It answers
+`score_ready {request, filename, folder, pages}` (`pages` 0 if MuseScore is missing or failed).
+Unity reads `score.json` and shows the page whose `page_starts` entry was last passed, using the
+`time` of `expect_notes` and the `position` of `song_progress`.
 
 ### Tutorial demonstrations (`play_example`)
 
@@ -199,7 +242,8 @@ core: query already searched and its file still there? ── yes ──▶ sear
         ▼
 search worker:
    song-search --source freemidi ──▶ up to 4 files downloaded into a scratch folder
-   keep only files that parse, have a piano part, and are safe for the visualizer
+   keep only files that parse, have a piano part (at least 10% of the notes on a piano), and
+   are safe for the visualizer
    none left? try --source bitmidi the same way
    move the keepers into the songs folder
         ▼
@@ -213,7 +257,8 @@ The search tool only downloads; the bridge validates the files.
 `get_report_status` answers whether there is anything to report: recorded free-play notes, or a
 follow-me session with notes.
 
-`generate_report` stops free-play recording. If the last request was less than 5 seconds ago, or a
+`generate_report` stops free-play recording. With MuseScore, the free-play page is followed by the
+take as sheet music. If the last request was less than 5 seconds ago, or a
 report is still rendering, nothing else happens. Otherwise:
 
 ```
@@ -251,6 +296,14 @@ It writes the PDF, `pagina_N.png` (120 dpi) and `Registrazione_Audio.wav` into `
 the written feedback, `pages.py` draws one matplotlib figure per page, `audio.py` synthesizes the WAV,
 and `render.py` puts it together.
 
+**`score-renderer --midi FILE --bars BARS.json --out-dir DIR`** runs MuseScore on the MIDI file
+and writes `pagina_N.png` (150 dpi) and `score.json` (`{"pages": N, "page_starts": [...]}`, the
+seconds at which each page starts, from the bar times), and prints `{"pages": N}`. MuseScore is
+found through `MIDI_BRIDGE_MUSESCORE` (empty: off), the `PATH`, or the usual install folders. Its
+MIDI import is told to keep the file's bars (`MeasureCount2xLess`, no pickup bar): left alone, it
+halves the bars of some songs, and the score's bars would no longer be the bridge's. The report
+renderer uses the same module (`bridge_tools/score/`) for the free-play score.
+
 **`song-search --source freemidi|bitmidi --query Q --dest DIR`** downloads the site's top results (at
 most 4, in parallel) into `DIR` and prints `[{"filename", "title", "artist"}, …]` in the site's order.
 The site addresses can be overridden with `MIDI_BRIDGE_FREEMIDI_URL` and `MIDI_BRIDGE_BITMIDI_URL`;
@@ -267,6 +320,8 @@ src/
 │   ├── message.rs     a raw MIDI message; is it a note? a program change?
 │   ├── timeline.rs    .mid file → merged list of (delay, message)
 │   ├── analysis.rs    reference notes, chords, piano detection, visualizer safety
+│   ├── hands.rs       which hand plays each note, for the two staves of the score
+│   ├── reduction.rs   a song as two piano tracks (one per hand), for engraving its score
 │   └── ports.rs       choosing and opening MIDI ports; the shared MIDI output handle
 ├── library.rs         SQLite song library and folder scan (SongLibrary trait + Library)
 ├── core/
@@ -282,10 +337,12 @@ src/
     ├── playback.rs    song player
     ├── examples.rs    demonstration player
     ├── report.rs      report worker
+    ├── score.rs       score worker and its cache
     ├── search.rs      search worker and download validation
     └── python.rs      running the Python tools through uv
 python/src/bridge_tools/
 ├── report/            report-renderer (model, analysis, text, pages, audio, render, cli)
+├── score/             score-renderer and MuseScore helpers (musescore, smf, cli)
 └── search/            song-search (sources, http, cli)
 examples/dump_timeline.rs   prints how a .mid file is read (used by the differential tests)
 ```

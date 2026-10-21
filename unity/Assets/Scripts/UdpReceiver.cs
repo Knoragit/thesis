@@ -266,6 +266,15 @@ public class UdpReceiver : MonoBehaviour
                         else if (json.action == "expect_notes")
                         {
                             if (gameManager != null) gameManager.ImpostaNoteAttese(json.notes);
+                            // Seguimi a turni: "time" e' il secondo del brano dell'accordo.
+                            if (songListManager != null && text.Contains("\"time\""))
+                                songListManager.TempoSeguimi(json.time);
+                        }
+                        else if (json.action == "score_ready")
+                        {
+                            UnityEngine.Debug.Log($"<color=green>[SPARTITO]</color> {json.filename}: {json.pages} pagine");
+                            if (songListManager != null)
+                                songListManager.SpartitoPronto(json.request, json.folder, json.pages);
                         }
                         else if (json.action == "clear_scene")
                         {
@@ -393,6 +402,9 @@ public class UdpReceiver : MonoBehaviour
     // serve a farlo ripartire da un altro punto quando si trascina la barra del tempo.
     private string branoOsservatore = null;
 
+    // Seguimi a turni: il bridge suona tante battute, poi le suona l'utente, e cosi' via.
+    private const int BATTUTE_PER_TURNO = 2;
+
     public void InviaComandoRiproduzione(string nomeFileMidi, bool isSeguimi = false)
     {
         AvviaBrano("\"filename\":\"" + nomeFileMidi + "\"", isSeguimi, 0f);
@@ -428,12 +440,29 @@ public class UdpReceiver : MonoBehaviour
 
         // 3. Mandiamo il comando al nuovo brano
         branoOsservatore = isSeguimi ? null : campoBrano;
+        if (isSeguimi)
+        {
+            AvviaSeguimi(campoBrano);
+            return;
+        }
         string azione = isSeguimi ? "play_song_follow" : "play_song";
         string json = "{\"action\":\"" + azione + "\", " + campoBrano;
         if (inizio > 0f)
             json += ", \"start\":" + inizio.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
         json += "}";
         InviaJsonAPython(json);
+    }
+
+    // Seguimi: chiede subito lo spartito (MuseScore impiega qualche secondo) e fa
+    // partire il brano dopo il pannello "Riproduco le prime note e poi tocca a te".
+    private void AvviaSeguimi(string campoBrano)
+    {
+        int richiesta = songListManager != null ? songListManager.SpartitoRichiesto() : 0;
+        InviaJsonAPython("{\"action\":\"get_score\", " + campoBrano + ", \"request\":" + richiesta + "}");
+
+        string json = "{\"action\":\"play_song_follow\", " + campoBrano + ", \"demo_bars\":" + BATTUTE_PER_TURNO + "}";
+        if (gameManager != null) gameManager.AvviaSeguimiConAvviso(() => InviaJsonAPython(json));
+        else InviaJsonAPython(json);
     }
 
     public void InviaComandoStartFaiTu(string nomePerformance = "Improvvisazione_Libera")
@@ -624,6 +653,8 @@ public class UdpReceiver : MonoBehaviour
         public bool has_material;
         public float position;
         public float duration;
+        public float time;
+        public int request;
         public SongData[] songs;
         public MidiData() { }
     }

@@ -58,6 +58,8 @@ public class SongListManager : MonoBehaviour
     private RaggioPuntatore raggioCache;
     // Barra del tempo di Osservatore: compare dopo aver scelto un brano.
     private BarraTempoOsservatore barraTempo;
+    // Spartito di Seguimi e il suo bottone: compaiono dopo aver scelto un brano.
+    private SpartitoSeguimi spartito;
 
     private GameManager.AppState statoPrecedente = GameManager.AppState.Onboarding;
 
@@ -130,6 +132,15 @@ public class SongListManager : MonoBehaviour
         {
             barraTempo = gameObject.AddComponent<BarraTempoOsservatore>();
             barraTempo.Inizializza(canvasObserver, () => cerchioObserver != null ? (RectTransform)cerchioObserver.transform : null);
+        }
+
+        Canvas canvasSeguimi = contenitoreSeguimi != null ? contenitoreSeguimi.GetComponentInParent<Canvas>() : null;
+        if (canvasSeguimi != null)
+        {
+            spartito = gameObject.AddComponent<SpartitoSeguimi>();
+            spartito.Inizializza(canvasSeguimi,
+                () => cerchioSeguimi != null ? (RectTransform)cerchioSeguimi.transform : null,
+                () => TrovaIndietro(contenitoreSeguimi));
         }
 
         AggiornaGruppoAttivo();
@@ -623,18 +634,45 @@ public class SongListManager : MonoBehaviour
             barraTempo.Abilita();
     }
 
-    // Posizione del brano di Osservatore inviata dal bridge ("song_progress").
+    // Posizione del brano inviata dal bridge ("song_progress"): in Osservatore muove
+    // la barra del tempo, in Seguimi (dimostrazione delle battute) gira lo spartito.
     public void ProgressoBranoRicevuto(float posizione, float durata)
     {
-        if (barraTempo == null || gameManager == null) return;
+        if (gameManager == null) return;
+        if (gameManager.statoAttuale == GameManager.AppState.Seguimi)
+        {
+            if (spartito != null) spartito.AggiornaTempo(posizione);
+            return;
+        }
+        if (barraTempo == null) return;
         if (gameManager.statoAttuale != GameManager.AppState.Osservatore) return;
         barraTempo.Progresso(posizione, durata);
+    }
+
+    // Seguimi: si e' scelto un brano. Restituisce il numero della richiesta dello
+    // spartito, che il bridge rimanda con "score_ready".
+    public int SpartitoRichiesto()
+    {
+        return spartito != null ? spartito.NuovaRichiesta() : 0;
+    }
+
+    public void SpartitoPronto(int richiesta, string cartella, int pagine)
+    {
+        if (spartito != null) spartito.SpartitoPronto(richiesta, cartella, pagine);
+    }
+
+    // Seguimi: secondo del brano dell'accordo atteso ("expect_notes").
+    public void TempoSeguimi(float secondi)
+    {
+        if (spartito != null) spartito.AggiornaTempo(secondi);
     }
 
     // Ferma l'esecuzione corrente (riproduzione + colonne) e pulisce il visualizzatore.
     private void FermaRiproduzione()
     {
         if (barraTempo != null) barraTempo.Disabilita();
+        if (spartito != null) spartito.Disabilita();
+        if (gameManager != null) gameManager.AnnullaAvvioSeguimi();
 
         if (receiver == null) receiver = FindFirstObjectByType<UdpReceiver>();
         if (receiver != null) receiver.InviaComandoStop();

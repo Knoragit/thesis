@@ -5,7 +5,11 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::library::parse_song_info;
-use crate::midi::analysis::{self, ReferenceNote};
+use crate::midi::analysis::{self, ReferenceNote, TimedChord};
+
+/// A chord starting this close after a turn boundary still belongs to that turn: bar times and
+/// note times are accumulated differently and can disagree by rounding.
+const TURN_TOLERANCE: f64 = 0.001;
 
 /// A press paired with its release; the follow-me version has no hand information.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -27,27 +31,56 @@ pub struct FollowSession {
 }
 
 /// What the next step of a follow-me song is.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Step {
     Chord(Vec<u8>),
+    /// In turns: a chord for the user and when it starts in the song, in seconds.
+    TimedChord(Vec<u8>, f64),
+    /// In turns: play the song from `start` to `end` (seconds; `None` is the end of the song)
+    /// before the user plays the same stretch.
+    Demo {
+        start: f64,
+        end: Option<f64>,
+    },
     Finished,
 }
 
 #[derive(Debug, Default)]
 pub struct Follow {
     active: bool,
-    chords: Vec<Vec<u8>>,
+    chords: Vec<TimedChord>,
     next: usize,
+    /// In turns: where each turn starts, in seconds. The first is always 0.
+    turns: Option<Vec<f64>>,
+    /// The turn last demonstrated.
+    turn: Option<usize>,
+    /// A demonstration is playing: the user's notes are not recorded.
+    demonstrating: bool,
     held: HashMap<u8, (f64, f64)>,
     sessions: Vec<FollowSession>,
 }
 
 impl Follow {
     /// Starts following a song; the sequence and history of any earlier song are replaced.
-    pub fn begin(&mut self, filename: &str, reference_notes: Vec<ReferenceNote>) {
+    ///
+    /// With `turns` (the start of each turn, in seconds), each stretch is demonstrated before
+    /// the user plays it; stretches without notes are skipped.
+    pub fn begin(
+        &mut self,
+        filename: &str,
+        reference_notes: Vec<ReferenceNote>,
+        turns: Option<Vec<f64>>,
+    ) {
         let (title, artist) = parse_song_info(filename);
-        self.chords = analysis::chords(&reference_notes);
+        self.chords = analysis::timed_chords(&reference_notes);
         self.next = 0;
+        self.turns = turns.map(|mut turns| {
+            turns.retain(|t| *t > 0.0);
+            turns.insert(0, 0.0);
+            turns
+        });
+        self.turn = None;
+        self.demonstrating = false;
         self.active = true;
         self.held.clear();
         self.sessions.push(FollowSession {
@@ -59,15 +92,36 @@ impl Follow {
         });
     }
 
-    /// The next chord to show. Past the last one, following ends.
+    /// The next chord to show, or, in turns, the demonstration of the stretch it starts. Past the
+    /// last chord, following ends.
     pub fn advance(&mut self) -> Step {
-        if let Some(chord) = self.chords.get(self.next) {
-            self.next += 1;
-            Step::Chord(chord.clone())
-        } else {
+        self.demonstrating = false;
+        let Some(chord) = self.chords.get(self.next) else {
             self.active = false;
-            Step::Finished
+            return Step::Finished;
+        };
+        let Some(turns) = &self.turns else {
+            self.next += 1;
+            return Step::Chord(chord.notes.clone());
+        };
+        let turn = turns
+            .partition_point(|start| *start <= chord.start + TURN_TOLERANCE)
+            .saturating_sub(1);
+        if self.turn != Some(turn) {
+            self.turn = Some(turn);
+            self.demonstrating = true;
+            return Step::Demo {
+                start: turns[turn],
+                end: turns.get(turn + 1).copied(),
+            };
         }
+        self.next += 1;
+        Step::TimedChord(chord.notes.clone(), chord.start)
+    }
+
+    #[must_use]
+    pub fn is_demonstrating(&self) -> bool {
+        self.active && self.demonstrating
     }
 
     /// Stops recording the user's notes. The loaded chords stay, as in the original.
@@ -81,7 +135,7 @@ impl Follow {
     }
 
     pub fn press(&mut self, note: u8, velocity: f64, now: f64) {
-        if self.active {
+        if self.active && !self.demonstrating {
             self.held.insert(note, (velocity, now));
         }
     }
@@ -129,10 +183,41 @@ mod tests {
             .collect()
     }
 
+    impl Follow {
+        fn begin_plain(&mut self, filename: &str, notes: Vec<ReferenceNote>) {
+            self.begin(filename, notes, None);
+        }
+    }
+
+    #[test]
+    fn in_turns_each_stretch_is_demonstrated_then_played_and_empty_ones_are_skipped() {
+        let mut follow = Follow::default();
+        // Turns start at 0, 2, 4 and 6 s; nothing happens between 2 and 4 s.
+        let notes = song(&[(60, 0.0), (62, 1.0), (64, 4.0), (65, 5.9995), (67, 6.5)]);
+        follow.begin("a.mid", notes, Some(vec![2.0, 4.0, 6.0]));
+        let demo = |start, end| Step::Demo { start, end };
+        assert_eq!(follow.advance(), demo(0.0, Some(2.0)));
+        assert!(follow.is_demonstrating());
+        follow.press(60, 0.5, 0.1);
+        follow.release(60, 0.2);
+        assert_eq!(follow.advance(), Step::TimedChord(vec![60], 0.0));
+        assert!(!follow.is_demonstrating());
+        assert_eq!(follow.advance(), Step::TimedChord(vec![62], 1.0));
+        assert_eq!(follow.advance(), demo(4.0, Some(6.0)));
+        assert_eq!(follow.advance(), Step::TimedChord(vec![64], 4.0));
+        // Just before a boundary by rounding: it belongs to the next turn.
+        assert_eq!(follow.advance(), demo(6.0, None));
+        assert_eq!(follow.advance(), Step::TimedChord(vec![65], 5.9995));
+        assert_eq!(follow.advance(), Step::TimedChord(vec![67], 6.5));
+        assert_eq!(follow.advance(), Step::Finished);
+        // The note played during the demonstration was not recorded.
+        assert!(follow.played_sessions().is_empty());
+    }
+
     #[test]
     fn chords_are_served_in_order_then_it_finishes_repeatedly() {
         let mut follow = Follow::default();
-        follow.begin("a.mid", song(&[(60, 0.0), (64, 0.01), (72, 1.0)]));
+        follow.begin_plain("a.mid", song(&[(60, 0.0), (64, 0.01), (72, 1.0)]));
         assert!(follow.is_active());
         assert_eq!(follow.advance(), Step::Chord(vec![60, 64]));
         assert_eq!(follow.advance(), Step::Chord(vec![72]));
@@ -144,14 +229,14 @@ mod tests {
     #[test]
     fn an_empty_song_finishes_immediately() {
         let mut follow = Follow::default();
-        follow.begin("a.mid", vec![]);
+        follow.begin_plain("a.mid", vec![]);
         assert_eq!(follow.advance(), Step::Finished);
     }
 
     #[test]
     fn stopping_keeps_the_sequence_but_stops_recording() {
         let mut follow = Follow::default();
-        follow.begin("a.mid", song(&[(60, 0.0), (72, 1.0)]));
+        follow.begin_plain("a.mid", song(&[(60, 0.0), (72, 1.0)]));
         assert_eq!(follow.advance(), Step::Chord(vec![60]));
         follow.stop();
         follow.press(60, 0.5, 1.0);
@@ -163,11 +248,11 @@ mod tests {
     #[test]
     fn notes_go_to_the_latest_session_and_empty_sessions_are_left_out() {
         let mut follow = Follow::default();
-        follow.begin("First - Artist.mid", song(&[(60, 0.0)]));
+        follow.begin_plain("First - Artist.mid", song(&[(60, 0.0)]));
         follow.press(60, 0.5, 1.0);
         follow.release(60, 1.5);
-        follow.begin("second.mid", song(&[(62, 0.0)]));
-        follow.begin("third.mid", song(&[(64, 0.0)]));
+        follow.begin_plain("second.mid", song(&[(62, 0.0)]));
+        follow.begin_plain("third.mid", song(&[(64, 0.0)]));
         follow.press(64, 0.7, 5.0);
         follow.release(64, 5.5);
 
@@ -192,9 +277,9 @@ mod tests {
     #[test]
     fn a_note_held_across_songs_is_dropped() {
         let mut follow = Follow::default();
-        follow.begin("a.mid", song(&[(60, 0.0)]));
+        follow.begin_plain("a.mid", song(&[(60, 0.0)]));
         follow.press(60, 0.5, 1.0);
-        follow.begin("b.mid", song(&[(60, 0.0)]));
+        follow.begin_plain("b.mid", song(&[(60, 0.0)]));
         follow.release(60, 2.0);
         assert!(follow.played_sessions().is_empty());
     }

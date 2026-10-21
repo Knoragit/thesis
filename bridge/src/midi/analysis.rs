@@ -5,7 +5,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use super::{Message, NoteKind, Timeline};
+use super::{Message, NoteKind, TimedMessage, Timeline};
 
 /// A note of the song as played by the original performer.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -57,26 +57,42 @@ pub fn reference_notes(timeline: &Timeline) -> Vec<ReferenceNote> {
     notes
 }
 
+/// A chord of the song and when its first note starts, in seconds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimedChord {
+    pub start: f64,
+    pub notes: Vec<u8>,
+}
+
 /// Groups notes into chords: each note joins the chord if it starts within the chord window of
 /// the *previous note* (so a run of closely spaced notes chains into one chord). Repeated pitches
 /// inside a chord are listed once.
 #[must_use]
-pub fn chords(notes: &[ReferenceNote]) -> Vec<Vec<u8>> {
-    let mut chords: Vec<Vec<u8>> = Vec::new();
+pub fn timed_chords(notes: &[ReferenceNote]) -> Vec<TimedChord> {
+    let mut chords: Vec<TimedChord> = Vec::new();
     let mut previous_start: Option<f64> = None;
     for note in notes {
         let continues = previous_start.is_none_or(|prev| note.start - prev < CHORD_WINDOW);
         match chords.last_mut() {
             Some(chord) if continues => {
-                if !chord.contains(&note.note) {
-                    chord.push(note.note);
+                if !chord.notes.contains(&note.note) {
+                    chord.notes.push(note.note);
                 }
             }
-            _ => chords.push(vec![note.note]),
+            _ => chords.push(TimedChord {
+                start: note.start,
+                notes: vec![note.note],
+            }),
         }
         previous_start = Some(note.start);
     }
     chords
+}
+
+/// The chords of [`timed_chords`], without their times.
+#[must_use]
+pub fn chords(notes: &[ReferenceNote]) -> Vec<Vec<u8>> {
+    timed_chords(notes).into_iter().map(|c| c.notes).collect()
 }
 
 /// Whether the song has a piano part: a General MIDI piano-family program (0-7), or no program
@@ -93,6 +109,119 @@ pub fn has_piano_part(timeline: &Timeline) -> bool {
         }
     }
     !any_program
+}
+
+/// The General MIDI drum channel (channel 10): never part of the piano.
+const DRUM_CHANNEL: u8 = 9;
+
+/// Follows which instrument each channel plays, to keep only the piano part of a song: the
+/// channels whose current program is a piano (0-7, the default before any program change),
+/// except the drum channel. A song with no piano at all falls back to every instrument but the
+/// drums ([`Self::melodic`]).
+#[derive(Debug, Clone, Default)]
+pub struct PianoChannels {
+    programs: [u8; 16],
+    any_instrument: bool,
+}
+
+impl PianoChannels {
+    /// Keeps every channel except the drums.
+    #[must_use]
+    pub fn melodic() -> Self {
+        Self {
+            any_instrument: true,
+            ..Self::default()
+        }
+    }
+
+    /// Takes one channel message in song order (`program` if it is a program change) and says
+    /// whether it belongs to the piano part.
+    pub fn keeps(&mut self, channel: u8, program: Option<u8>) -> bool {
+        let channel = channel & 0x0f;
+        if let Some(program) = program {
+            self.programs[usize::from(channel)] = program;
+        }
+        channel != DRUM_CHANNEL && (self.any_instrument || self.programs[usize::from(channel)] <= 7)
+    }
+
+    /// Like [`Self::keeps`], for a raw message; system messages always belong.
+    pub fn keeps_message(&mut self, message: &Message) -> bool {
+        match message.as_bytes().first() {
+            Some(&status) if status < 0xf0 => self.keeps(status, message.program_change()),
+            _ => true,
+        }
+    }
+}
+
+/// Songs with less of their notes on a piano than this are not offered: following them would
+/// leave almost nothing to play.
+pub const MIN_PIANO_SHARE: f64 = 0.10;
+
+/// The share of the song's notes that are played by a piano (see [`PianoChannels`]), from 0 to 1.
+#[must_use]
+pub fn piano_share(timeline: &Timeline) -> f64 {
+    let mut channels = PianoChannels::default();
+    let (mut piano, mut all) = (0usize, 0usize);
+    for (_, message) in timeline.timed_messages() {
+        let kept = channels.keeps_message(message);
+        if message.note().is_some_and(|n| n.kind == NoteKind::Press) {
+            all += 1;
+            piano += usize::from(kept);
+        }
+    }
+    if all == 0 {
+        0.0
+    } else {
+        piano as f64 / all as f64
+    }
+}
+
+/// Whether the song has a real piano part: at least [`MIN_PIANO_SHARE`] of its notes. Stricter
+/// than [`has_piano_part`], which the drum channel's usual program 0 already satisfies.
+#[must_use]
+pub fn has_enough_piano(timeline: &Timeline) -> bool {
+    piano_share(timeline) >= MIN_PIANO_SHARE
+}
+
+/// The song with only its piano part: other instruments and drums are left out, their delays
+/// carried over so every kept message stays at its time. A song with no piano notes keeps every
+/// instrument but the drums, and one with nothing but drums is returned whole, so there is
+/// always something to play.
+#[must_use]
+pub fn piano_part(timeline: &Timeline) -> Timeline {
+    filtered(timeline, PianoChannels::default())
+        .or_else(|| filtered(timeline, PianoChannels::melodic()))
+        .unwrap_or_else(|| timeline.clone())
+}
+
+/// The messages `channels` keeps, or `None` if no note is left.
+fn filtered(timeline: &Timeline, mut channels: PianoChannels) -> Option<Timeline> {
+    let mut steps = Vec::with_capacity(timeline.steps.len());
+    let mut carried = 0.0;
+    let mut any_note = false;
+    for step in &timeline.steps {
+        let keep = step
+            .message
+            .as_ref()
+            .is_none_or(|message| channels.keeps_message(message));
+        if keep {
+            any_note |= step.message.as_ref().is_some_and(|m| m.note().is_some());
+            steps.push(TimedMessage {
+                delay: carried + step.delay,
+                message: step.message.clone(),
+            });
+            carried = 0.0;
+        } else {
+            carried += step.delay;
+        }
+    }
+    if carried > 0.0 {
+        steps.push(TimedMessage {
+            delay: carried,
+            message: None,
+        });
+    }
+    any_note.then_some(Timeline { steps })
 }
 
 /// Why a song would swamp the visualizer.
@@ -188,7 +317,6 @@ pub fn check_visualizer_safety(timeline: &Timeline) -> Result<(), Unsafe> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::midi::TimedMessage;
 
     /// Builds a timeline from (absolute seconds, message) pairs plus a trailing wait.
     fn timeline(events: &[(f64, Message)], end: f64) -> Timeline {
@@ -214,6 +342,78 @@ mod tests {
 
     fn off(note: u8) -> Message {
         Message::note_on(0, note, 0)
+    }
+
+    #[test]
+    fn the_piano_part_leaves_out_other_instruments_and_drums_keeping_the_timing() {
+        let program = |channel: u8, program: u8| Message::from_bytes(vec![0xc0 | channel, program]);
+        let song = timeline(
+            &[
+                (0.0, program(1, 33)),               // channel 1: bass
+                (0.5, Message::note_on(1, 40, 100)), // bass
+                (1.0, on(60)),                       // channel 0: piano by default
+                (1.5, Message::note_on(9, 38, 100)), // drums
+                (2.0, off(60)),
+                (2.5, program(1, 0)), // channel 1 becomes a piano
+                (3.0, Message::note_on(1, 64, 100)),
+            ],
+            4.0,
+        );
+        let part = piano_part(&song);
+        let kept: Vec<_> = part
+            .timed_messages()
+            .map(|(time, message)| (time, message.as_bytes().to_vec()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (1.0, vec![0x90, 60, 100]),
+                (2.0, vec![0x90, 60, 0]),
+                (2.5, vec![0xc1, 0]),
+                (3.0, vec![0x91, 64, 100]),
+            ]
+        );
+        assert!((part.length() - 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_piano_share_counts_notes_on_piano_channels_only() {
+        let guitar = Message::from_bytes(vec![0xc1, 25]);
+        let drum_kit = Message::from_bytes(vec![0xc9, 0]);
+        let mut events = vec![(0.0, guitar), (0.0, drum_kit)];
+        for i in 0..8 {
+            let t = f64::from(i);
+            events.push((t, Message::note_on(1, 50, 90)));
+            events.push((t, Message::note_on(9, 38, 90)));
+        }
+        events.push((8.0, on(60)));
+        let song = timeline(&events, 9.0);
+        assert!((piano_share(&song) - 1.0 / 17.0).abs() < 1e-12);
+        assert!(has_piano_part(&song)); // the old check is fooled by the drum kit's program 0
+        assert!(!has_enough_piano(&song));
+        assert!(has_enough_piano(&timeline(&[(0.0, on(60))], 1.0)));
+        assert!(!has_enough_piano(&timeline(&[], 1.0)));
+    }
+
+    #[test]
+    fn a_song_without_piano_keeps_its_other_instruments_but_not_the_drums() {
+        let guitar = Message::from_bytes(vec![0xc2, 25]);
+        let song = timeline(
+            &[
+                (0.0, guitar),
+                (0.5, Message::note_on(2, 52, 90)),
+                (1.0, Message::note_on(9, 38, 100)),
+            ],
+            2.0,
+        );
+        let keys: Vec<u8> = piano_part(&song)
+            .timed_messages()
+            .filter_map(|(_, m)| m.note().map(|n| n.note))
+            .collect();
+        assert_eq!(keys, [52]);
+
+        let drums_only = timeline(&[(0.0, Message::note_on(9, 38, 100))], 1.0);
+        assert_eq!(piano_part(&drums_only), drums_only);
     }
 
     #[test]

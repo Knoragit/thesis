@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import patches
@@ -103,6 +105,16 @@ def free_play_page(notes: list[PlayedNote]) -> Figure:
         0.0, 0.95, free_play_feedback(shifted), transform=ax_text.transAxes, fontsize=8,
         verticalalignment="top", bbox=_TEXT_BOX,
     )  # fmt: skip
+    return fig
+
+
+def score_page(image: Path, number: int, count: int) -> Figure:
+    """The free-play take as sheet music: one engraved page, after the free-play page."""
+    title = "SPARTITO · MODALITÀ FAI TU"
+    fig = _new_page(f"{title} ({number}/{count})" if count > 1 else title, 15)
+    ax = fig.add_axes((0.04, 0.02, 0.92, 0.9))
+    ax.imshow(plt.imread(image), interpolation="antialiased")
+    ax.axis("off")
     return fig
 
 

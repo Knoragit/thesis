@@ -52,16 +52,7 @@ impl Timeline {
             return Err(TimelineError::Unsupported("type 2 (asynchronous) file"));
         }
         let ticks_per_beat = f64::from(ticks_per_beat.as_int());
-
-        let mut items = Vec::new();
-        for track in &smf.tracks {
-            let mut tick = 0u64;
-            for event in track {
-                tick += u64::from(event.delta.as_int());
-                items.push((tick, &event.kind));
-            }
-        }
-        items.sort_by_key(|(tick, _)| *tick); // stable: ties keep track order
+        let items = merged(&smf);
 
         let mut steps = Vec::with_capacity(items.len() + 1);
         let mut tempo = DEFAULT_TEMPO_MICROS;
@@ -91,6 +82,62 @@ impl Timeline {
         Ok(Self { steps })
     }
 
+    /// When each bar starts, in seconds, following the file's time signatures (4/4 until one
+    /// is set) and tempo changes. A time signature that falls inside a bar starts a new bar.
+    pub fn bar_starts(bytes: &[u8]) -> Result<Vec<f64>, TimelineError> {
+        let smf = Smf::parse(bytes)?;
+        let Timing::Metrical(ticks_per_beat) = smf.header.timing else {
+            return Err(TimelineError::Unsupported("SMPTE time division"));
+        };
+        let ticks_per_beat = u64::from(ticks_per_beat.as_int());
+        let items = merged(&smf);
+        let last_tick = items.last().map_or(0, |(tick, _)| *tick);
+
+        let mut tempos = Vec::new(); // (tick, microseconds per beat)
+        let mut signatures = Vec::new(); // (tick, ticks per bar)
+        for (tick, kind) in &items {
+            match kind {
+                TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {
+                    tempos.push((*tick, micros.as_int()));
+                }
+                TrackEventKind::Meta(MetaMessage::TimeSignature(numerator, power, ..)) => {
+                    let quarter_ticks = ticks_per_beat * 4;
+                    let bar = (u64::from(*numerator) * quarter_ticks) >> u32::from(*power).min(6);
+                    signatures.push((*tick, bar.max(1)));
+                }
+                _ => {}
+            }
+        }
+
+        let mut bars = Vec::new();
+        let mut tick = 0u64;
+        let mut bar_ticks = ticks_per_beat * 4;
+        let mut next_signature = 0;
+        while tick < last_tick {
+            while let Some(&(at, ticks)) = signatures.get(next_signature)
+                && at <= tick
+            {
+                bar_ticks = ticks;
+                next_signature += 1;
+            }
+            bars.push(tick);
+            let mut next = tick + bar_ticks;
+            if let Some(&(at, _)) = signatures.get(next_signature)
+                && at < next
+            {
+                next = at;
+            }
+            tick = next;
+        }
+        if bars.is_empty() {
+            bars.push(0);
+        }
+        Ok(bars
+            .into_iter()
+            .map(|bar| tick_seconds(bar, &tempos, ticks_per_beat as f64))
+            .collect())
+    }
+
     /// Total duration in seconds (mido's `MidiFile.length`).
     #[must_use]
     pub fn length(&self) -> f64 {
@@ -106,6 +153,31 @@ impl Timeline {
             step.message.as_ref().map(|message| (clock, message))
         })
     }
+}
+
+/// Every event of every track by absolute tick, stable between tracks.
+pub(super) fn merged<'a>(smf: &'a Smf<'a>) -> Vec<(u64, &'a TrackEventKind<'a>)> {
+    let mut items = Vec::new();
+    for track in &smf.tracks {
+        let mut tick = 0u64;
+        for event in track {
+            tick += u64::from(event.delta.as_int());
+            items.push((tick, &event.kind));
+        }
+    }
+    items.sort_by_key(|(tick, _)| *tick); // stable: ties keep track order
+    items
+}
+
+/// The time of `tick` in seconds, given the tempo changes `(tick, micros)` in tick order.
+fn tick_seconds(tick: u64, tempos: &[(u64, u32)], ticks_per_beat: f64) -> f64 {
+    let mut total = 0.0;
+    let (mut from, mut tempo) = (0u64, DEFAULT_TEMPO_MICROS);
+    for &(at, micros) in tempos.iter().take_while(|(at, _)| *at < tick) {
+        total += seconds(at - from, tempo, ticks_per_beat);
+        (from, tempo) = (at, micros);
+    }
+    total + seconds(tick - from, tempo, ticks_per_beat)
 }
 
 /// `mido.tick2second`, with the same operation order so results match bit for bit.
@@ -320,6 +392,37 @@ mod tests {
                 vec![0xf0, 1, 2, 3, 0xf7],
             ]
         );
+    }
+
+    fn signature(delta: u32, numerator: u8, power: u8) -> TrackEvent<'static> {
+        at(
+            delta,
+            TrackEventKind::Meta(MetaMessage::TimeSignature(numerator, power, 24, 8)),
+        )
+    }
+
+    #[test]
+    fn bars_are_four_beats_until_a_time_signature_says_otherwise() {
+        // Two 4/4 bars at 120 BPM (2 s each), then 3/4 bars (1.5 s each) up to tick 4800.
+        let bytes = file(
+            Format::SingleTrack,
+            vec![vec![note(0, true, 60), signature(3840, 3, 2), end(960)]],
+        );
+        assert_eq!(Timeline::bar_starts(&bytes).unwrap(), [0.0, 2.0, 4.0]);
+    }
+
+    #[test]
+    fn bars_follow_tempo_changes_and_restart_at_a_new_signature() {
+        let bytes = file(
+            Format::SingleTrack,
+            vec![vec![
+                signature(0, 2, 2),   // 2/4: 960 ticks a bar
+                tempo(960, 250_000),  // the second bar is twice as fast
+                signature(480, 6, 3), // tick 1440, mid-bar: a 6/8 bar starts here
+                end(1440),
+            ]],
+        );
+        assert_eq!(Timeline::bar_starts(&bytes).unwrap(), [0.0, 1.0, 1.25]);
     }
 
     #[test]

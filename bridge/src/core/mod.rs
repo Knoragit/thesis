@@ -52,11 +52,12 @@ pub enum Input {
 pub enum Effect {
     Send(Event),
     /// Stop any current song, then play this one on the piano and stream it to Unity, starting
-    /// `start_ms` milliseconds in.
+    /// `start_ms` milliseconds in and stopping at `end_ms` (or at the end of the song).
     StartPlayback {
         id: PlaybackId,
         path: PathBuf,
         start_ms: u64,
+        end_ms: Option<u64>,
     },
     StopPlayback,
     StartExample(Challenge),
@@ -65,6 +66,12 @@ pub enum Effect {
     Search {
         query: String,
     },
+    /// Engrave the score of a song (or reuse the cached one) and send `score_ready`.
+    RenderScore {
+        request: i64,
+        filename: String,
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -72,6 +79,10 @@ pub struct Core {
     playback: Option<PlaybackId>,
     next_playback_id: PlaybackId,
     follow: Follow,
+    /// The file of the song being followed, for its demonstrations.
+    follow_path: Option<PathBuf>,
+    /// The playback that is demonstrating a follow-me turn.
+    demo: Option<PlaybackId>,
     recorder: Recorder,
     last_report_at: Option<f64>,
     report_in_flight: bool,
@@ -92,6 +103,13 @@ impl Core {
             Input::PlaybackFinished(id) => {
                 if self.playback == Some(id) {
                     self.playback = None;
+                }
+                // The demonstration is over: the user's turn starts.
+                if self.demo == Some(id) {
+                    self.demo = None;
+                    if self.follow.is_active() {
+                        effects.push(self.next_step());
+                    }
                 }
             }
             Input::ReportFinished(outcome) => {
@@ -134,10 +152,16 @@ impl Core {
             }
             Command::SearchSong { query } => Self::search(&query, songs, effects),
             Command::PlaySong { song, start_ms } => self.play_song(&song, start_ms, songs, effects),
-            Command::PlaySongFollow(song) => self.follow_song(&song, songs, effects),
+            Command::PlaySongFollow(song) => self.follow_song(&song, None, songs, effects),
+            Command::PlaySongFollowInTurns { song, bars } => {
+                self.follow_song(&song, Some(bars), songs, effects);
+            }
+            // During a demonstration there is no chord to complete.
+            Command::NextStep if self.follow.is_demonstrating() => {}
             Command::NextStep => effects.push(self.next_step()),
             Command::StopSong => {
                 self.playback = None;
+                self.demo = None;
                 self.follow.stop();
                 effects.push(Effect::StopPlayback);
                 effects.push(send(Event::ClearScene));
@@ -160,6 +184,17 @@ impl Core {
                     has_material: self.has_report_material(),
                 }));
             }
+            Command::GetScore { song, request } => match Self::locate(&song, songs) {
+                Ok(filename) => {
+                    let path = songs.song_file(&filename).expect("located a moment ago");
+                    effects.push(Effect::RenderScore {
+                        request,
+                        filename,
+                        path,
+                    });
+                }
+                Err(message) => effects.push(send(Event::PlayError(message.to_owned()))),
+            },
         }
     }
 
@@ -209,17 +244,34 @@ impl Core {
     ) {
         match Self::locate(song, songs) {
             Ok(filename) => {
-                let id = self.next_playback_id;
-                self.next_playback_id += 1;
-                self.playback = Some(id);
                 let path = songs.song_file(&filename).expect("located a moment ago");
-                effects.push(Effect::StartPlayback { id, path, start_ms });
+                self.demo = None;
+                effects.push(self.start_playback(path, start_ms, None));
             }
             Err(message) => effects.push(send(Event::PlayError(message.to_owned()))),
         }
     }
 
-    fn follow_song(&mut self, song: &SongRef, songs: &dyn SongLibrary, effects: &mut Vec<Effect>) {
+    fn start_playback(&mut self, path: PathBuf, start_ms: u64, end_ms: Option<u64>) -> Effect {
+        let id = self.next_playback_id;
+        self.next_playback_id += 1;
+        self.playback = Some(id);
+        Effect::StartPlayback {
+            id,
+            path,
+            start_ms,
+            end_ms,
+        }
+    }
+
+    /// Follows a song; with `bars`, in turns of that many bars, each demonstrated first.
+    fn follow_song(
+        &mut self,
+        song: &SongRef,
+        bars: Option<u32>,
+        songs: &dyn SongLibrary,
+        effects: &mut Vec<Effect>,
+    ) {
         let located = Self::locate(song, songs).and_then(|filename| {
             let notes =
                 log_error("read song", songs.reference_notes(&filename)).ok_or(FILE_UNREADABLE)?;
@@ -227,7 +279,13 @@ impl Core {
         });
         match located {
             Ok((filename, notes)) => {
-                self.follow.begin(&filename, notes);
+                let turns = bars.and_then(|bars| {
+                    let starts = log_error("read bars", songs.bar_starts(&filename))?;
+                    Some(starts.into_iter().step_by(bars as usize).collect())
+                });
+                self.follow_path = songs.song_file(&filename);
+                self.demo = None;
+                self.follow.begin(&filename, notes, turns);
                 effects.push(self.next_step());
             }
             Err(message) => effects.push(send(Event::PlayError(message.to_owned()))),
@@ -237,6 +295,18 @@ impl Core {
     fn next_step(&mut self) -> Effect {
         send(match self.follow.advance() {
             Step::Chord(notes) => Event::ExpectNotes(notes),
+            Step::TimedChord(notes, time) => Event::ExpectNotesAt { notes, time },
+            Step::Demo { start, end } => {
+                let Some(path) = self.follow_path.clone() else {
+                    return send(Event::ClearScene);
+                };
+                let effect =
+                    self.start_playback(path, seconds_to_ms(start), end.map(seconds_to_ms));
+                if let Effect::StartPlayback { id, .. } = effect {
+                    self.demo = Some(id);
+                }
+                return effect;
+            }
             Step::Finished => Event::ClearScene,
         })
     }
@@ -284,6 +354,10 @@ impl Core {
     fn has_report_material(&self) -> bool {
         !self.recorder.notes().is_empty() || !self.follow.played_sessions().is_empty()
     }
+}
+
+fn seconds_to_ms(seconds: f64) -> u64 {
+    (seconds.max(0.0) * 1000.0).round() as u64
 }
 
 fn send(event: Event) -> Effect {

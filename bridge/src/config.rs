@@ -28,6 +28,10 @@ pub struct Config {
     #[arg(long, env = "MIDI_BRIDGE_SESSIONS_SUBDIR", default_value = "Sessioni")]
     pub sessions_subdir: String,
 
+    /// Subfolder of the data folder where engraved scores are cached, one folder per song.
+    #[arg(long, env = "MIDI_BRIDGE_SCORES_SUBDIR", default_value = "Spartiti")]
+    pub scores_subdir: String,
+
     /// Use the MIDI input port whose name contains this text (default: first physical port).
     #[arg(long, env = "MIDI_BRIDGE_MIDI_IN")]
     pub midi_in: Option<String>,
@@ -66,6 +70,11 @@ impl Config {
     #[must_use]
     pub fn sessions_dir(&self) -> PathBuf {
         self.data_dir.join(&self.sessions_subdir)
+    }
+
+    #[must_use]
+    pub fn scores_dir(&self) -> PathBuf {
+        self.data_dir.join(&self.scores_subdir)
     }
 
     #[must_use]

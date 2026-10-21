@@ -67,6 +67,11 @@ impl SongLibrary for FakeLibrary {
     fn reference_notes(&self, filename: &str) -> Result<Vec<ReferenceNote>, LibraryError> {
         Ok(self.files[filename].clone())
     }
+
+    /// Every song has one-second bars.
+    fn bar_starts(&self, _filename: &str) -> Result<Vec<f64>, LibraryError> {
+        Ok((0..4).map(f64::from).collect())
+    }
 }
 
 fn entry(id: i64, name: &str) -> SongEntry {
@@ -196,6 +201,7 @@ fn playing_a_song_by_name_or_id_starts_playback() {
             id: 0,
             path: "/songs/chords.mid".into(),
             start_ms: 0,
+            end_ms: None,
         }]
     );
     assert_eq!(
@@ -204,6 +210,7 @@ fn playing_a_song_by_name_or_id_starts_playback() {
             id: 1,
             path: "/songs/other.mid".into(),
             start_ms: 0,
+            end_ms: None,
         }]
     );
     assert_eq!(
@@ -215,6 +222,7 @@ fn playing_a_song_by_name_or_id_starts_playback() {
             id: 2,
             path: "/songs/other.mid".into(),
             start_ms: 30_000,
+            end_ms: None,
         }]
     );
 }
@@ -295,6 +303,93 @@ fn following_serves_chords_then_clears_the_scene() {
     );
     assert_eq!(events(h.command(Command::NextStep)), [Event::ClearScene]);
     assert_eq!(events(h.command(Command::NextStep)), [Event::ClearScene]);
+}
+
+fn follow_in_turns(name: &str) -> Command {
+    Command::PlaySongFollowInTurns {
+        song: SongRef::Filename(name.to_owned()),
+        bars: 2,
+    }
+}
+
+#[test]
+fn following_in_turns_demonstrates_each_stretch_before_the_user_plays_it() {
+    let mut h = Harness::new();
+    let demo = |id, start_ms, end_ms| Effect::StartPlayback {
+        id,
+        path: "/songs/chords.mid".into(),
+        start_ms,
+        end_ms,
+    };
+    // Bars 1-2 (0-2 s) are played first.
+    assert_eq!(
+        h.command(follow_in_turns("chords.mid")),
+        [demo(0, 0, Some(2000))]
+    );
+    // Asking for the next chord during the demonstration does nothing, and nothing is recorded.
+    assert_eq!(h.command(Command::NextStep), []);
+    h.tap(60);
+    assert_eq!(
+        events(h.input(Input::PlaybackFinished(0))),
+        [Event::ExpectNotesAt {
+            notes: vec![60, 64],
+            time: 0.0
+        }]
+    );
+    assert_eq!(
+        events(h.command(Command::NextStep)),
+        [Event::ExpectNotesAt {
+            notes: vec![72],
+            time: 1.0
+        }]
+    );
+    // Bars 3-4 run to the end of the song.
+    assert_eq!(h.command(Command::NextStep), [demo(1, 2000, None)]);
+    h.input(Input::PlaybackFinished(1));
+    assert_eq!(events(h.command(Command::NextStep)), [Event::ClearScene]);
+    assert!(h.core.follow.played_sessions().is_empty());
+}
+
+#[test]
+fn stopping_during_a_demonstration_does_not_start_the_turn() {
+    let mut h = Harness::new();
+    h.command(follow_in_turns("chords.mid"));
+    h.command(Command::StopSong);
+    assert_eq!(h.input(Input::PlaybackFinished(0)), []);
+    // A replaced song's demonstration winding down does not start the new song's turn either.
+    h.command(follow_in_turns("chords.mid")); // id 1
+    h.command(follow_in_turns("other.mid")); // id 2
+    assert_eq!(h.input(Input::PlaybackFinished(1)), []);
+    assert_eq!(
+        events(h.input(Input::PlaybackFinished(2))),
+        [Event::ExpectNotesAt {
+            notes: vec![50],
+            time: 0.0
+        }]
+    );
+}
+
+#[test]
+fn scores_are_requested_for_known_songs_only() {
+    let mut h = Harness::new();
+    assert_eq!(
+        h.command(Command::GetScore {
+            song: SongRef::Id(2),
+            request: 7
+        }),
+        [Effect::RenderScore {
+            request: 7,
+            filename: "other.mid".into(),
+            path: "/songs/other.mid".into(),
+        }]
+    );
+    assert_eq!(
+        events(h.command(Command::GetScore {
+            song: SongRef::Id(99),
+            request: 8
+        })),
+        [Event::PlayError(NOT_IN_DATABASE.into())]
+    );
 }
 
 #[test]

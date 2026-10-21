@@ -64,8 +64,8 @@ fn keep_if_playable(candidate: Candidate, scratch: &Path, songs_dir: &Path) -> O
             return None;
         }
     };
-    if !analysis::has_piano_part(&timeline) {
-        tracing::info!(file = %candidate.filename, "discarding song without piano");
+    if !analysis::has_enough_piano(&timeline) {
+        tracing::info!(file = %candidate.filename, "discarding song without a piano part");
         return None;
     }
     if let Err(reason) = analysis::check_visualizer_safety(&timeline) {

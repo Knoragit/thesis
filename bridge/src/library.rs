@@ -13,6 +13,8 @@ use crate::protocol::SongEntry;
 
 const UNKNOWN_ARTIST: &str = "Artista Non Specificato";
 const UNKNOWN_TITLE: &str = "Titolo Sconosciuto";
+/// Subfolder of the songs folder where songs without a piano part are moved by the scan.
+pub const DISCARDED_SUBDIR: &str = "Scartate";
 /// How many suggestions Unity gets while the user is typing.
 const SUGGESTION_LIMIT: i64 = 20;
 
@@ -49,6 +51,8 @@ pub trait SongLibrary {
     fn song_file(&self, filename: &str) -> Option<PathBuf>;
     /// The notes of a song, as played by the original performer.
     fn reference_notes(&self, filename: &str) -> Result<Vec<ReferenceNote>, LibraryError>;
+    /// When each bar of a song starts, in seconds.
+    fn bar_starts(&self, filename: &str) -> Result<Vec<f64>, LibraryError>;
 }
 
 #[derive(Debug)]
@@ -108,7 +112,9 @@ impl Library {
         Ok(())
     }
 
-    /// Registers every `.mid` file in the songs folder that is safe to visualize.
+    /// Registers every `.mid` file in the songs folder that is safe to visualize. Songs without
+    /// a real piano part are moved to the [`DISCARDED_SUBDIR`] subfolder and taken out of the
+    /// library (moving them back and restarting would bring them back only if they changed).
     /// Returns how many songs were added.
     pub fn scan_folder(&self) -> Result<usize, LibraryError> {
         let mut names: Vec<String> = std::fs::read_dir(&self.songs_dir)?
@@ -121,17 +127,32 @@ impl Library {
         let mut added = 0;
         for name in names {
             // An unreadable file is registered anyway; it fails when someone tries to play it.
-            if let Ok(timeline) = Timeline::load(&self.songs_dir.join(&name))
-                && let Err(reason) = analysis::check_visualizer_safety(&timeline)
-            {
-                tracing::warn!(file = %name, %reason, "skipping song unsafe for the visualizer");
-                continue;
+            if let Ok(timeline) = Timeline::load(&self.songs_dir.join(&name)) {
+                if !analysis::has_enough_piano(&timeline) {
+                    self.discard(&name)?;
+                    continue;
+                }
+                if let Err(reason) = analysis::check_visualizer_safety(&timeline) {
+                    tracing::warn!(file = %name, %reason, "skipping song unsafe for the visualizer");
+                    continue;
+                }
             }
             let (title, artist) = parse_song_info(&name);
             added += self.insert(&name.to_lowercase(), &name, Some(&title), Some(&artist))?;
         }
         tracing::info!(added, "scanned songs folder");
         Ok(added)
+    }
+
+    /// Moves a song without a piano part out of the songs folder and out of the database.
+    fn discard(&self, name: &str) -> Result<(), LibraryError> {
+        let folder = self.songs_dir.join(DISCARDED_SUBDIR);
+        std::fs::create_dir_all(&folder)?;
+        std::fs::rename(self.songs_dir.join(name), folder.join(name))?;
+        self.connection
+            .execute("DELETE FROM midi_files WHERE filename = ?1", params![name])?;
+        tracing::info!(file = %name, folder = %folder.display(), "moved song without a piano part");
+        Ok(())
     }
 
     fn insert(
@@ -242,9 +263,13 @@ impl SongLibrary for Library {
     }
 
     fn reference_notes(&self, filename: &str) -> Result<Vec<ReferenceNote>, LibraryError> {
-        Ok(analysis::reference_notes(&Timeline::load(
-            &self.song_path(filename),
-        )?))
+        let song = Timeline::load(&self.song_path(filename))?;
+        Ok(analysis::reference_notes(&analysis::piano_part(&song)))
+    }
+
+    fn bar_starts(&self, filename: &str) -> Result<Vec<f64>, LibraryError> {
+        let bytes = std::fs::read(self.song_path(filename)).map_err(TimelineError::from)?;
+        Ok(Timeline::bar_starts(&bytes)?)
     }
 }
 
@@ -359,6 +384,31 @@ mod tests {
         let before = library.list().unwrap();
         assert_eq!(library.scan_folder().unwrap(), 0);
         assert_eq!(library.list().unwrap(), before);
+    }
+
+    #[test]
+    fn songs_without_a_piano_part_are_moved_away_and_forgotten() {
+        let f = fixture();
+        f.put("piano.mid", &testing::melody(&[60]));
+        f.put("violin.mid", &testing::with_program(40, 60));
+        let library = f.open();
+        // Registered by an older bridge, before the check existed.
+        library
+            .insert("violin", "violin.mid", Some("Violin"), None)
+            .unwrap();
+
+        assert_eq!(library.scan_folder().unwrap(), 1);
+        let names: Vec<String> = library
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.filename)
+            .collect();
+        assert_eq!(names, ["piano.mid"]);
+        assert!(!f.songs.join("violin.mid").exists());
+        assert!(f.songs.join(DISCARDED_SUBDIR).join("violin.mid").is_file());
+        // The subfolder is not mistaken for a song on the next scan.
+        assert_eq!(library.scan_folder().unwrap(), 0);
     }
 
     #[test]

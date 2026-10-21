@@ -24,10 +24,14 @@ winget install Git.Git
 winget install Rustlang.Rustup
 winget install astral-sh.uv
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install MuseScore.MuseScore
 ```
 
-The last line installs the C++ build tools that Rust needs on Windows. Skip it if Visual Studio is
-already installed with the "Desktop development with C++" workload.
+The build tools line installs the C++ build tools that Rust needs on Windows. Skip it if Visual
+Studio is already installed with the "Desktop development with C++" workload. MuseScore 4 draws the
+sheet music (the follow-me score and the free-play score in the report); without it the app works,
+with no sheet music. The bridge finds it in its install folder; set `MIDI_BRIDGE_MUSESCORE` to the
+path of `MuseScore4.exe` if it is somewhere else.
 
 Close and reopen PowerShell, then restart Unity Hub, so that both see the new `PATH`.
 
@@ -76,6 +80,7 @@ cargo build --release
 |---|---|
 | Unity logs `Impossibile avviare il bridge (<path>)` | `midi-bridge.exe` exists at that path (step 2). |
 | The bridge window shows `no MIDI input` or picks the wrong port | Add `--midi-in "<part of the port name>"` (and `--midi-out`) to `bridgeArguments`. The window lists the ports it connected to. |
+| The follow-me score says "Spartito non disponibile" | MuseScore 4 is installed (step 1). The bridge window logs `score not available` with the reason. |
 | `uv is not available: reports are disabled` | `uv --version` works in a new PowerShell; restart Unity Hub after installing `uv`. |
 | The bridge window closes right after opening | Run `bridge\target\release\midi-bridge.exe` with the same arguments in PowerShell to read the error. `port 5006 is already in use` means another bridge is still running: close its window. |
 

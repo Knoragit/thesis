@@ -79,6 +79,11 @@ pub enum Command {
         start_ms: u64,
     },
     PlaySongFollow(SongRef),
+    /// Follow-me in turns: the bridge plays `bars` bars, then the user plays them, and so on.
+    PlaySongFollowInTurns {
+        song: SongRef,
+        bars: u32,
+    },
     NextStep,
     StopSong,
     PlayExample(Challenge),
@@ -91,6 +96,11 @@ pub enum Command {
     },
     GenerateReport,
     GetReportStatus,
+    /// Engraves the song's score (cached), answered by `score_ready` with the same `request`.
+    GetScore {
+        song: SongRef,
+        request: i64,
+    },
 }
 
 /// Parses a datagram. Returns `None` for anything that is not a recognised, usable command.
@@ -113,7 +123,13 @@ pub fn parse_command(datagram: &[u8]) -> Option<Command> {
             song: song_ref(&object),
             start_ms: start_ms(&object),
         },
-        "play_song_follow" => Command::PlaySongFollow(song_ref(&object)),
+        "play_song_follow" => match object.get("demo_bars").and_then(integer) {
+            Some(bars @ 1..=64) => Command::PlaySongFollowInTurns {
+                song: song_ref(&object),
+                bars: bars as u32,
+            },
+            _ => Command::PlaySongFollow(song_ref(&object)),
+        },
         "next_step" => Command::NextStep,
         "stop_song" => Command::StopSong,
         "play_example" => Command::PlayExample(challenge(&object)?),
@@ -123,6 +139,10 @@ pub fn parse_command(datagram: &[u8]) -> Option<Command> {
         "note_hand" => note_hand(&object)?,
         "generate_report" => Command::GenerateReport,
         "get_report_status" => Command::GetReportStatus,
+        "get_score" => Command::GetScore {
+            song: song_ref(&object),
+            request: object.get("request").and_then(integer).unwrap_or(0),
+        },
         _ => return None,
     })
 }
@@ -232,6 +252,11 @@ pub enum Event {
         velocity: f64,
     },
     ExpectNotes(Vec<u8>),
+    /// Follow-me in turns: the chord to play and when it starts in the song, in seconds.
+    ExpectNotesAt {
+        notes: Vec<u8>,
+        time: f64,
+    },
     SongList {
         songs: Vec<SongEntry>,
         suggest: bool,
@@ -246,6 +271,14 @@ pub enum Event {
     },
     ReportStatus {
         has_material: bool,
+    },
+    /// The engraved score of `filename`: `pagina_1.png` … in `folder`, plus `score.json`.
+    /// No pages means it could not be engraved.
+    ScoreReady {
+        request: i64,
+        filename: String,
+        folder: String,
+        pages: u32,
     },
     /// How far the observer song has got, both in seconds.
     SongProgress {
@@ -282,6 +315,23 @@ impl Event {
             Self::ExpectNotes(notes) => to_wire(&ExpectNotesWire {
                 action: "expect_notes",
                 notes,
+            }),
+            Self::ExpectNotesAt { notes, time } => to_wire(&ExpectNotesAtWire {
+                action: "expect_notes",
+                notes,
+                time: *time,
+            }),
+            Self::ScoreReady {
+                request,
+                filename,
+                folder,
+                pages,
+            } => to_wire(&ScoreReadyWire {
+                action: "score_ready",
+                request: *request,
+                filename,
+                folder,
+                pages: *pages,
             }),
             Self::SongList {
                 songs,
@@ -362,6 +412,22 @@ struct NoteWire {
 struct ExpectNotesWire<'a> {
     action: &'static str,
     notes: &'a [u8],
+}
+
+#[derive(Serialize)]
+struct ExpectNotesAtWire<'a> {
+    action: &'static str,
+    notes: &'a [u8],
+    time: f64,
+}
+
+#[derive(Serialize)]
+struct ScoreReadyWire<'a> {
+    action: &'static str,
+    request: i64,
+    filename: &'a str,
+    folder: &'a str,
+    pages: u32,
 }
 
 #[derive(Serialize)]
@@ -655,6 +721,51 @@ mod tests {
         assert_eq!(
             parse(r#"{"action":"get_report_status"}"#),
             Some(GetReportStatus)
+        );
+    }
+
+    #[test]
+    fn follow_in_turns_and_scores() {
+        assert_eq!(
+            parse(r#"{"action":"play_song_follow","id":2,"demo_bars":2}"#),
+            Some(Command::PlaySongFollowInTurns {
+                song: SongRef::Id(2),
+                bars: 2
+            })
+        );
+        // Without a usable bar count it is the plain follow-me.
+        for bad in [
+            r#""demo_bars":0"#,
+            r#""demo_bars":"x""#,
+            r#""demo_bars":null"#,
+        ] {
+            assert_eq!(
+                parse(&format!(r#"{{"action":"play_song_follow","id":2,{bad}}}"#)),
+                Some(Command::PlaySongFollow(SongRef::Id(2)))
+            );
+        }
+        assert_eq!(
+            parse(r#"{"action":"get_score","filename":"a.mid","request":4}"#),
+            Some(Command::GetScore {
+                song: SongRef::Filename("a.mid".into()),
+                request: 4
+            })
+        );
+        assert_eq!(
+            text(&Event::ExpectNotesAt {
+                notes: vec![60, 64],
+                time: 1.5
+            }),
+            r#"{"action": "expect_notes", "notes": [60, 64], "time": 1.5}"#
+        );
+        assert_eq!(
+            text(&Event::ScoreReady {
+                request: 4,
+                filename: "a.mid".into(),
+                folder: "C:/x".into(),
+                pages: 2
+            }),
+            r#"{"action": "score_ready", "request": 4, "filename": "a.mid", "folder": "C:/x", "pages": 2}"#
         );
     }
 

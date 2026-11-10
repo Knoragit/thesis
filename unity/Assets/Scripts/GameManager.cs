@@ -106,6 +106,16 @@ public class GameManager : MonoBehaviour
     private const float SOVRAPPOSIZIONE_MAX_LEGATO = 0.35f;
     private const float PAUSA_RIPARTENZA = 3.5f;
 
+    // Eco dinamico (prima sfida di Medio), piu' tollerante delle altre: basta un
+    // "forte" meno deciso, e la ripetizione e' piano se e' sotto la soglia assoluta
+    // OPPURE abbastanza piu' leggera della media delle 4 note forti.
+    private const float SOGLIA_FORTE_ECO = 0.45f;
+    private const float SOGLIA_PIANO_ECO = 0.40f;
+    private const float SCARTO_ECO = 0.10f;
+    // Un errore resta a schermo piu' a lungo e chiede di ricominciare da capo.
+    private const float DURATA_ERRORE_ECO = 4.0f;
+    private const string INVITO_ERRORE_ECO = "Ricomincia da capo: suona di nuovo le 4 note forti.";
+
     // Gestione Note per la modalità "Seguimi"
     private List<int> expectedNotes = new List<int>();
     private HashSet<int> userPressedNotes = new HashSet<int>();
@@ -2454,6 +2464,7 @@ public class GameManager : MonoBehaviour
         if (tempiSequenza.Count > 0 && ora - tempiSequenza[tempiSequenza.Count - 1] > PAUSA_RIPARTENZA)
         {
             noteSequenza.Clear();
+            velocitaSequenza.Clear();
             tempiSequenza.Clear();
             faseSfida = 0;
             contatoreSfida = 0;
@@ -2461,13 +2472,14 @@ public class GameManager : MonoBehaviour
 
         if (faseSfida == 0)
         {
-            if (velocity < SOGLIA_FORTE)
+            if (velocity < SOGLIA_FORTE_ECO)
             {
                 // Una nota piano prima di iniziare non conta; a meta' frase e' un errore.
-                if (noteSequenza.Count > 0) ErroreSfida("Errore: la prima volta suona forte!");
+                if (noteSequenza.Count > 0) ErroreEco("Errore: la prima volta suona forte!");
                 return;
             }
             noteSequenza.Add(nota);
+            velocitaSequenza.Add(velocity);
             tempiSequenza.Add(ora);
             if (noteSequenza.Count == 4)
             {
@@ -2478,13 +2490,18 @@ public class GameManager : MonoBehaviour
         }
 
         tempiSequenza.Add(ora);
+        float mediaForte = 0f;
+        foreach (float v in velocitaSequenza) mediaForte += v;
+        if (velocitaSequenza.Count > 0) mediaForte /= velocitaSequenza.Count;
+        bool piano = velocity <= SOGLIA_PIANO_ECO || velocity <= mediaForte - SCARTO_ECO;
+
         if (nota != noteSequenza[contatoreSfida])
         {
-            ErroreSfida("Errore: ripeti le stesse 4 note!");
+            ErroreEco("Errore: ripeti le stesse 4 note!");
         }
-        else if (velocity > SOGLIA_PIANO)
+        else if (!piano)
         {
-            ErroreSfida("Errore: la ripetizione va suonata piano!");
+            ErroreEco("Errore: la ripetizione va suonata piano!");
         }
         else
         {
@@ -2644,6 +2661,14 @@ public class GameManager : MonoBehaviour
         transizioneTutorialCoroutine = StartCoroutine(TransizioneErroreCoroutine(messaggio, DescrizioneSfida(sfidaAttuale)));
     }
 
+    // Errore dell'Eco dinamico: resta di piu' e dice di ricominciare da capo. Alla
+    // fine il tentativo riparte da zero (PreparaSfidaPerLUtente nella coroutine).
+    private void ErroreEco(string messaggio)
+    {
+        transizioneTutorialCoroutine = StartCoroutine(TransizioneErroreCoroutine(
+            messaggio, DescrizioneSfida(sfidaAttuale), DURATA_ERRORE_ECO, INVITO_ERRORE_ECO));
+    }
+
     // Sfida superata: parte la successiva del livello. Dopo l'ultima il livello e'
     // completato, si torna al menu delle difficolta' e il livello riparte da capo.
     private IEnumerator CompletaSfidaCoroutine()
@@ -2684,12 +2709,13 @@ public class GameManager : MonoBehaviour
         tutorialCoroutine = StartCoroutine(AvviaSfidaConEsempio(sfida, DescrizioneSfida(sfida)));
     }
 
-    private IEnumerator TransizioneErroreCoroutine(string messaggioErrore, string testoSfidaDaRipristinare)
+    private IEnumerator TransizioneErroreCoroutine(string messaggioErrore, string testoSfidaDaRipristinare,
+        float durata = 2.0f, string invito = "Rileggi bene le istruzioni e riprova.")
     {
         inTransizione = true;
-        if (tutorialText != null) tutorialText.text = $"<color=#{Hex(ErroreTutorial)}><b>{messaggioErrore}</b></color>\n\nRileggi bene le istruzioni e riprova.";
+        if (tutorialText != null) tutorialText.text = $"<color=#{Hex(ErroreTutorial)}><b>{messaggioErrore}</b></color>\n\n{invito}";
 
-        yield return new WaitForSeconds(2.0f);
+        yield return new WaitForSeconds(durata);
 
         // Reset secco di TUTTO lo stato di tentativo, non solo del primo tasto dello
         // staccato. Motivo: durante questi 2s inTransizione blocca anche i "release"

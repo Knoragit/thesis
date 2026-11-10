@@ -46,6 +46,21 @@ public class BarraTempoOsservatore : MonoBehaviour
     private float durata = 0f;
     private float ignoraFinoA = 0f;
 
+    // --- PAUSA ---
+    // La pausa ferma il brano (stop_song) ricordando dove era arrivato; la
+    // ripresa lo fa ripartire da li', come un salto della barra. Il bridge non
+    // sa nulla della pausa.
+    private bool inPausa = false;
+    // Il brano e' arrivato in fondo: "play" lo fa ripartire dall'inizio.
+    private bool finito = false;
+    private float posizionePausa = 0f;
+    // Ultima posizione dal bridge (arriva ogni 250 ms) e quando e' arrivata: alla
+    // pausa si stima la posizione vera aggiungendo il tempo passato da allora.
+    private float ultimaPosizione = 0f;
+    private float tempoUltimaPosizione = 0f;
+    private GameObject iconaPausa;
+    private GameObject iconaPlay;
+
     public void Inizializza(Canvas canvas, System.Func<RectTransform> bottonePlus)
     {
         if (canvas == null) return;
@@ -62,17 +77,82 @@ public class BarraTempoOsservatore : MonoBehaviour
         abilitata = true;
         durata = 0f;
         ignoraFinoA = 0f;
+        inPausa = false;
+        finito = false;
+        AggiornaIcona();
     }
 
     public void Disabilita()
     {
         abilitata = false;
+        inPausa = false;
+        finito = false;
         if (pannello != null) pannello.gameObject.SetActive(false);
+    }
+
+    private void AlternaPausa()
+    {
+        if (inPausa || finito) Riprendi();
+        else Pausa();
+    }
+
+    private void Pausa()
+    {
+        if (!abilitata || durata <= 0f) return;
+        if (receiver == null) receiver = FindFirstObjectByType<UdpReceiver>();
+        if (receiver == null) return;
+
+        float trascorso = Mathf.Min(Time.unscaledTime - tempoUltimaPosizione, 0.3f);
+        posizionePausa = Mathf.Clamp(ultimaPosizione + trascorso, 0f, durata);
+        inPausa = true;
+        receiver.InviaComandoStop();
+        slider.SetValueWithoutNotify(posizionePausa / durata);
+        testoPosizione.text = FormattaTempo(posizionePausa);
+        AggiornaIcona();
+        Debug.Log($"[BARRA TEMPO] pausa a {posizionePausa:F2}s");
+    }
+
+    private void Riprendi()
+    {
+        if (!abilitata || durata <= 0f) return;
+        if (receiver == null) receiver = FindFirstObjectByType<UdpReceiver>();
+        if (receiver == null) return;
+
+        // In fondo al brano si ricomincia dall'inizio.
+        float da = finito || posizionePausa >= durata - 0.05f ? 0f : posizionePausa;
+        inPausa = false;
+        finito = false;
+        ignoraFinoA = Time.unscaledTime + PAUSA_DOPO_SALTO;
+        ultimaPosizione = da;
+        tempoUltimaPosizione = Time.unscaledTime;
+        slider.SetValueWithoutNotify(da / durata);
+        testoPosizione.text = FormattaTempo(da);
+        receiver.InviaComandoSaltaA(da);
+        AggiornaIcona();
+        Debug.Log($"[BARRA TEMPO] ripresa da {da:F2}s");
+    }
+
+    // Pausa mentre suona, play quando e' in pausa o finito.
+    private void AggiornaIcona()
+    {
+        bool mostraPlay = inPausa || finito;
+        if (iconaPausa != null) iconaPausa.SetActive(!mostraPlay);
+        if (iconaPlay != null) iconaPlay.SetActive(mostraPlay);
     }
 
     public void Progresso(float posizione, float durataBrano)
     {
         if (!abilitata || pannello == null || durataBrano <= 0f) return;
+        // Un ultimo song_progress gia' in viaggio quando si e' messo in pausa.
+        if (inPausa) return;
+        ultimaPosizione = posizione;
+        tempoUltimaPosizione = Time.unscaledTime;
+        if (posizione >= durataBrano - 0.01f && !finito)
+        {
+            finito = true;
+            posizionePausa = durataBrano;
+            AggiornaIcona();
+        }
 
         durata = durataBrano;
         testoDurata.text = FormattaTempo(durata);
@@ -109,7 +189,18 @@ public class BarraTempoOsservatore : MonoBehaviour
 
         float secondi = valore * durata;
         testoPosizione.text = FormattaTempo(secondi);
+        // In pausa la barra sceglie solo da dove riprendere: si suona con "play".
+        if (inPausa || finito)
+        {
+            posizionePausa = secondi;
+            inPausa = true;
+            finito = false;
+            AggiornaIcona();
+            return;
+        }
         ignoraFinoA = Time.unscaledTime + PAUSA_DOPO_SALTO;
+        ultimaPosizione = secondi;
+        tempoUltimaPosizione = Time.unscaledTime;
         receiver.InviaComandoSaltaA(secondi);
     }
 
@@ -183,10 +274,90 @@ public class BarraTempoOsservatore : MonoBehaviour
 
         // Tempi ai due lati e slider in mezzo: la larghezza del pannello cambia con
         // lo spazio disponibile, quindi tutto e' ancorato ai bordi.
-        testoPosizione = CreaTesto(pannello, "Posizione", 0f, 75f, "0:00");
+        // Da sinistra: bottone pausa/play, tempo trascorso, slider, durata.
+        CreaBottonePausa(pannello, 70f);
+        testoPosizione = CreaTesto(pannello, "Posizione", 0f, 190f, "0:00");
         testoDurata = CreaTesto(pannello, "Durata", 1f, -75f, "0:00");
         slider = CreaSlider(pannello, 150f, 80f);
+        // Lo slider parte dopo il tempo trascorso, non a 150 dal bordo.
+        RectTransform srt = (RectTransform)slider.transform;
+        srt.offsetMin = new Vector2(265f, srt.offsetMin.y);
         slider.Rilasciato += SaltaA;
+    }
+
+    // Bottone tondo Tan con l'icona pausa (due barre) o play (triangolo).
+    private void CreaBottonePausa(RectTransform parent, float x)
+    {
+        GameObject go = new GameObject("BottonePausa", typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+        RectTransform rt = (RectTransform)go.transform;
+        rt.anchorMin = new Vector2(0f, 0.5f);
+        rt.anchorMax = new Vector2(0f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = new Vector2(x, 0f);
+        rt.sizeDelta = new Vector2(96f, 96f);
+
+        Image img = go.GetComponent<Image>();
+        img.sprite = SpriteCerchio();
+        img.color = GameManager.TanColor;
+        GameManager.ApplicaPenombra(go);
+
+        Button btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+        ColorBlock colori = btn.colors;
+        colori.normalColor = Color.white;
+        colori.highlightedColor = GameManager.DustyRose;
+        colori.selectedColor = Color.white;
+        colori.pressedColor = GameManager.DustyRose;
+        btn.colors = colori;
+        btn.navigation = new Navigation { mode = Navigation.Mode.None };
+        btn.onClick.AddListener(AlternaPausa);
+
+        // Pausa: due barre verticali.
+        iconaPausa = new GameObject("IconaPausa", typeof(RectTransform));
+        iconaPausa.transform.SetParent(go.transform, false);
+        ((RectTransform)iconaPausa.transform).sizeDelta = new Vector2(96f, 96f);
+        foreach (float bx in new[] { -11f, 11f })
+        {
+            Image barra = CreaImmagine("Barra", iconaPausa.transform, Color.black, null);
+            barra.rectTransform.sizeDelta = new Vector2(12f, 40f);
+            barra.rectTransform.anchoredPosition = new Vector2(bx, 0f);
+        }
+
+        // Play: triangolo, spostato un po' a destra per sembrare centrato.
+        Image triangolo = CreaImmagine("IconaPlay", go.transform, Color.black, SpriteTriangolo());
+        triangolo.type = Image.Type.Simple;
+        triangolo.rectTransform.sizeDelta = new Vector2(40f, 44f);
+        triangolo.rectTransform.anchoredPosition = new Vector2(4f, 0f);
+        iconaPlay = triangolo.gameObject;
+
+        AggiornaIcona();
+    }
+
+    private static Sprite spriteTriangolo;
+
+    // Triangolo che punta a destra, disegnato a runtime (il font non ha il simbolo play).
+    private static Sprite SpriteTriangolo()
+    {
+        if (spriteTriangolo != null) return spriteTriangolo;
+        const int lato = 64;
+        Texture2D tex = new Texture2D(lato, lato, TextureFormat.RGBA32, false);
+        Color[] px = new Color[lato * lato];
+        for (int y = 0; y < lato; y++)
+        {
+            // Mezza altezza disponibile alla colonna x: da piena a sinistra a zero a destra.
+            float meta = (lato - 1) * 0.5f;
+            float dy = Mathf.Abs(y - meta);
+            for (int x = 0; x < lato; x++)
+            {
+                float limite = meta * (1f - x / (float)(lato - 1));
+                px[y * lato + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(limite - dy + 0.5f));
+            }
+        }
+        tex.SetPixels(px);
+        tex.Apply(false, true);
+        spriteTriangolo = Sprite.Create(tex, new Rect(0, 0, lato, lato), new Vector2(0.5f, 0.5f), 100f);
+        return spriteTriangolo;
     }
 
     private static TextMeshProUGUI CreaTesto(Transform parent, string nome, float ancoraX, float x, string testo)

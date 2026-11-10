@@ -35,7 +35,7 @@ PEAK = 0.9  # normalized peak, about -1 dBFS
 SAMPLE_RATE = 44_100
 
 _FLUIDSYNTH_PATHS = (
-    Path.home() / "Desktop/Nora/strumenti/fluidsynth/fluidsynth-v2.6.1-win10-x64-cpp11/bin/fluidsynth.exe",
+    Path.home() / "Desktop/Tesi Nora Limni/Nora/strumenti/fluidsynth/fluidsynth-v2.6.1-win10-x64-cpp11/bin/fluidsynth.exe",
 )
 _SOUNDFONT_PATHS = (Path(r"C:\Program Files\MuseScore 4\sound\MS Basic.sf3"),)
 

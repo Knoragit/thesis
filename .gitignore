@@ -1,3 +1,6 @@
 .DS_Store
 Thumbs.db
 __pycache__/
+
+# Cartella dati (canzoni, database, sessioni): resta solo in locale
+/Nora/

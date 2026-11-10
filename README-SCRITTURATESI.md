@@ -670,9 +670,9 @@ insegnante), poi l'utente lo ripete. I turni senza note si saltano.
 | Diagrammi di sequenza: avvio, Seguimi a turni, report | Sezione 7 |
 | Calibrazione a 3 punti (schema geometrico) | Sezione 4.2 |
 | Screenshot nel visore: colonne, guide verdi, sfere dello staccato, spartito, report | Registrazione dal visore |
-| Prima/dopo dello spartito (stesso brano, vecchia e nuova pipeline) | `Desktop/Nora/Spartiti/<brano>/pagina_N.png` rigenerate |
+| Prima/dopo dello spartito (stesso brano, vecchia e nuova pipeline) | `Desktop/Tesi Nora Limni/Nora/Spartiti/<brano>/pagina_N.png` rigenerate |
 | Tabella delle pause prima/dopo | Sezione 8.2 |
-| Pagine del report (piano roll, cromagramma, radar) | `Desktop/Nora/Sessioni/Sessione_*/pagina_N.png` |
+| Pagine del report (piano roll, cromagramma, radar) | `Desktop/Tesi Nora Limni/Nora/Sessioni/Sessione_*/pagina_N.png` |
 | Tabella delle differenze D1-D7 | Sezione 11.1 |
 | Piramide dei test | Sezione 10 |
 

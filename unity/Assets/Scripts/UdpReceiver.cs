@@ -24,7 +24,7 @@ public class UdpReceiver : MonoBehaviour
     [Tooltip("Percorso dell'eseguibile del bridge: assoluto, oppure relativo alla cartella del progetto Unity")]
     public string bridgeExecutable = "../bridge/target/release/midi-bridge.exe";
     [Tooltip("Argomenti da passare al bridge: cartella dati, nome del database, ecc. (midi-bridge --help)")]
-    public string bridgeArguments = "--data-dir \"C:/Users/vrlab/Desktop/Nora\" --db-file nora_database.db --report-name Report_Completo_Nora.pdf --songs-subdir Canzoni --sessions-subdir Sessioni";
+    public string bridgeArguments = "--data-dir \"C:/Users/vrlab/Desktop/Tesi Nora Limni/Nora\" --db-file nora_database.db --report-name Report_Completo_Nora.pdf --songs-subdir Canzoni --sessions-subdir Sessioni";
 
     private Process bridgeProcess;
 

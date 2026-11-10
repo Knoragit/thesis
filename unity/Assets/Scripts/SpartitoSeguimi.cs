@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
@@ -14,6 +15,12 @@ using TMPro;
 // sua stessa altezza e alla stessa distanza che c'e' tra "Torna al Menu" e il "+".
 // Anche lo spartito vive sul Canvas radice e non nel gruppo Seguimi (scalato x4 e
 // animato).
+//
+// Lo spartito si puo' spostare: si punta col raggio, si fa pinch, si muove la mano
+// e al rilascio resta li'. La posizione scelta vale per il brano in corso: con un
+// nuovo brano o uscendo da Seguimi lo spartito torna sotto il bottone.
+// Mani, raggio e pinch si leggono direttamente da OVRHand, come fa RaggioPuntatore:
+// il trascinamento dell'EventSystem non arrivava col pinch delle mani.
 public class SpartitoSeguimi : MonoBehaviour
 {
     // Altezza del bottone rispetto al diametro del "+" e spazio dal "+".
@@ -57,6 +64,27 @@ public class SpartitoSeguimi : MonoBehaviour
     private int paginaMostrata = -1;
     private int paginaVoluta = 0;
     private Texture2D texturePagina;
+
+    // Posizione scelta dall'utente trascinando lo spartito (centro, coordinate del
+    // Canvas). Finche' non lo sposta, lo spartito sta sotto il bottone.
+    private bool spostatoDallUtente = false;
+    private Vector2 centroUtente;
+    // Distanza tra il punto afferrato e il centro: il foglio non "salta" sotto il dito.
+    private Vector2 presa;
+    private Image foglio;
+
+    // Mani tracciate (cache rinfrescata ogni mezzo secondo), mano che tiene il
+    // foglio e stato del pinch al frame prima, per accorgersi di quando inizia.
+    private OVRHand[] mani = new OVRHand[0];
+    private float prossimoRinfrescoMani = 0f;
+    private OVRHand manoPresa;
+    private readonly Dictionary<OVRHand, bool> pinchPrima = new Dictionary<OVRHand, bool>();
+    // Dopo il rilascio il foglio torna bianco e resta bianco finche' il raggio non
+    // esce: l'hover si riaccende solo a un nuovo passaggio.
+    private bool attesaUscita = false;
+    // Hover dei bottoni (Dusty Rose) molto attenuato; un po' di piu' mentre lo si tiene.
+    private static readonly Color ColoreHoverFoglio = Color.Lerp(Color.white, GameManager.DustyRose, 0.2f);
+    private static readonly Color ColorePresaFoglio = Color.Lerp(Color.white, GameManager.DustyRose, 0.35f);
 
     [System.Serializable]
     private class InfoSpartito
@@ -145,8 +173,14 @@ public class SpartitoSeguimi : MonoBehaviour
         if (pannello != null) pannello.gameObject.SetActive(false);
     }
 
+    // Chiamata a ogni nuovo brano e all'uscita da Seguimi: anche la posizione
+    // scelta trascinando si dimentica, e lo spartito torna sotto il bottone.
     private void Svuota()
     {
+        spostatoDallUtente = false;
+        manoPresa = null;
+        attesaUscita = false;
+        if (foglio != null) foglio.color = Color.white;
         inPreparazione = false;
         cartella = null;
         numeroPagine = 0;
@@ -176,6 +210,8 @@ public class SpartitoSeguimi : MonoBehaviour
         pannello.gameObject.SetActive(abilitato && aperto);
         if (!abilitato || !aperto) return;
         pannello.SetAsLastSibling();
+        // Il foglio ora e' afferrabile: il raggio deve vederlo subito.
+        RinfrescaRaggio();
 
         if (numeroPagine > 0)
         {
@@ -262,7 +298,129 @@ public class SpartitoSeguimi : MonoBehaviour
         pannello.sizeDelta = new Vector2(larghezza, altezzaPagina);
         pannello.localScale = Vector3.one;
         pannello.localRotation = Quaternion.identity;
-        pannello.localPosition = new Vector3(centro.x, cima - altezzaPagina * 0.5f, 0f);
+        Vector2 centroPannello = spostatoDallUtente
+            ? centroUtente
+            : new Vector2(centro.x, cima - altezzaPagina * 0.5f);
+        pannello.localPosition = new Vector3(centroPannello.x, centroPannello.y, 0f);
+    }
+
+    // ---------------------------------------------------------------
+    // HOVER E TRASCINAMENTO (pinch e rilascio)
+    // ---------------------------------------------------------------
+    void Update()
+    {
+        if (pannello == null || foglio == null) return;
+        if (!pannello.gameObject.activeInHierarchy)
+        {
+            if (manoPresa != null) Rilascia();
+            attesaUscita = false;
+            foglio.color = Color.white;
+            return;
+        }
+
+        if (Time.time >= prossimoRinfrescoMani)
+        {
+            prossimoRinfrescoMani = Time.time + 0.5f;
+            mani = FindObjectsByType<OVRHand>(FindObjectsSortMode.None);
+        }
+
+        // Foglio in mano: segue il raggio finche' dura il pinch.
+        if (manoPresa != null)
+        {
+            if (!ManoValida(manoPresa) || !manoPresa.GetFingerIsPinching(OVRHand.HandFinger.Index))
+            {
+                Rilascia();
+            }
+            else if (PuntoSulCanvas(manoPresa, out Vector2 punto))
+            {
+                centroUtente = punto + presa;
+                pannello.localPosition = new Vector3(centroUtente.x, centroUtente.y, 0f);
+            }
+            RicordaPinch();
+            return;
+        }
+
+        bool sopra = false;
+        foreach (OVRHand mano in mani)
+        {
+            if (!ManoValida(mano)) continue;
+            bool pinch = mano.GetFingerIsPinching(OVRHand.HandFinger.Index);
+            pinchPrima.TryGetValue(mano, out bool prima);
+            bool colpisce = RaggioSulFoglio(mano);
+            if (colpisce) sopra = true;
+            // Si afferra solo un pinch che INIZIA sul foglio, non uno gia' in corso.
+            if (colpisce && pinch && !prima && manoPresa == null) Prendi(mano);
+        }
+        RicordaPinch();
+
+        if (manoPresa != null) return;
+        if (!sopra) attesaUscita = false;
+        foglio.color = sopra && !attesaUscita ? ColoreHoverFoglio : Color.white;
+    }
+
+    private void Prendi(OVRHand mano)
+    {
+        if (!PuntoSulCanvas(mano, out Vector2 punto)) return;
+        manoPresa = mano;
+        Vector2 centroAttuale = pannello.localPosition;
+        presa = centroAttuale - punto;
+        centroUtente = centroAttuale;
+        spostatoDallUtente = true;
+        foglio.color = ColorePresaFoglio;
+        Debug.Log("[SPARTITO] Preso col pinch: " + mano.name);
+    }
+
+    private void Rilascia()
+    {
+        manoPresa = null;
+        attesaUscita = true;
+        if (foglio != null) foglio.color = Color.white;
+        Debug.Log("[SPARTITO] Rilasciato in " + centroUtente);
+    }
+
+    private void RicordaPinch()
+    {
+        foreach (OVRHand mano in mani)
+        {
+            if (mano == null) continue;
+            pinchPrima[mano] = ManoValida(mano) && mano.GetFingerIsPinching(OVRHand.HandFinger.Index);
+        }
+    }
+
+    private static bool ManoValida(OVRHand mano)
+    {
+        return mano != null && mano.isActiveAndEnabled && mano.IsTracked
+            && mano.IsPointerPoseValid && mano.PointerPose != null;
+    }
+
+    private static Ray RaggioDi(OVRHand mano)
+    {
+        Transform pointer = mano.PointerPose;
+        return new Ray(pointer.position, pointer.forward);
+    }
+
+    // Il raggio della mano cade dentro il rettangolo del foglio?
+    private bool RaggioSulFoglio(OVRHand mano)
+    {
+        Ray raggio = RaggioDi(mano);
+        Plane piano = new Plane(pannello.forward, pannello.position);
+        if (!piano.Raycast(raggio, out float t) || t <= 0.01f) return false;
+        Vector3 locale = pannello.InverseTransformPoint(raggio.GetPoint(t));
+        return pannello.rect.Contains(new Vector2(locale.x, locale.y));
+    }
+
+    // Dove il raggio incontra il piano del Canvas, nelle coordinate del Canvas
+    // (le stesse di localPosition dello spartito).
+    private bool PuntoSulCanvas(OVRHand mano, out Vector2 punto)
+    {
+        punto = Vector2.zero;
+        if (canvasRt == null) return false;
+        Ray raggio = RaggioDi(mano);
+        Plane piano = new Plane(canvasRt.forward, canvasRt.position);
+        if (!piano.Raycast(raggio, out float t) || t <= 0.01f) return false;
+        Vector3 locale = canvasRt.InverseTransformPoint(raggio.GetPoint(t));
+        punto = new Vector2(locale.x, locale.y);
+        return true;
     }
 
     // Rettangolo di un elemento nelle coordinate del Canvas, senza la sua scala
@@ -348,9 +506,11 @@ public class SpartitoSeguimi : MonoBehaviour
         pannello.anchorMax = new Vector2(0.5f, 0.5f);
         pannello.pivot = new Vector2(0.5f, 0.5f);
         pannello.sizeDelta = new Vector2(500f * PROPORZIONE_PAGINA, 500f);
-        Image foglio = p.GetComponent<Image>();
+        foglio = p.GetComponent<Image>();
         foglio.color = Color.white;
-        foglio.raycastTarget = false;
+        // Bersaglio del raggio: cosi' il laser compare sopra lo spartito, che col
+        // pinch si afferra e si sposta (vedi Update).
+        foglio.raycastTarget = true;
         GameManager.ApplicaPenombra(p);
 
         GameObject paginaGO = new GameObject("Pagina", typeof(RectTransform), typeof(RawImage));

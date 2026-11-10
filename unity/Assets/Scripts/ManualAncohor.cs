@@ -23,6 +23,13 @@ public class ManualAnchor : MonoBehaviour
     public Material materialePunto2; // Es. Blu (Estremo Destro)
     public Material materialePunto3; // Es. Verde (Do Centrale)
 
+    // Diametro in metri della sfera guida e delle sferette lasciate sui punti presi.
+    private const float DIAMETRO_SFERE = 0.015f;
+    // Il colore della sfera guida segue lo sticker da puntare: rosso, poi blu, poi verde.
+    private static readonly Color ColoreSferaPunto1 = new Color(1f, 0.2f, 0.2f);
+    private static readonly Color ColoreSferaPunto2 = new Color(0.25f, 0.35f, 1f);
+    private static readonly Color ColoreSferaPunto3 = new Color(0.14f, 0.86f, 0.28f);
+
     private int currentStep = 0; // 0 = Attesa P1, 1 = Attesa P2, 2 = Attesa P3, 3 = Calibrato
     private Vector3 p1, p2, p3;
 
@@ -55,7 +62,12 @@ public class ManualAnchor : MonoBehaviour
 
         RisolviCamera();
 
-        if (guideSphere != null) guideSphere.SetActive(true);
+        if (guideSphere != null)
+        {
+            guideSphere.SetActive(true);
+            // La sfera e' una primitiva di diametro 1 senza genitore: la scala e' il diametro.
+            guideSphere.transform.localScale = Vector3.one * DIAMETRO_SFERE;
+        }
 
         if (guideSphere != null && guideSphere.GetComponent<Renderer>() != null)
         {
@@ -405,8 +417,27 @@ public class ManualAnchor : MonoBehaviour
         Debug.Log("[DEBUG] Calibratore resettato allo stato iniziale.");
     }
 
+    // Colora la sfera guida come lo sticker del punto da prendere.
+    private void AggiornaColoreSferaGuida()
+    {
+        if (guideSphere == null || currentStep >= 3) return;
+        Renderer r = guideSphere.GetComponent<Renderer>();
+        if (r == null) return;
+
+        Color colore = currentStep == 0 ? ColoreSferaPunto1
+                     : currentStep == 1 ? ColoreSferaPunto2
+                     : ColoreSferaPunto3;
+        // r.material crea una copia: il materiale GreenLight condiviso resta intatto.
+        Material m = r.material;
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", colore); // URP
+        m.color = colore;
+    }
+
     private void AggiornaTestoIstruzioni()
     {
+        // Il testo cambia a ogni punto preso: insieme cambia il colore della sfera.
+        AggiornaColoreSferaGuida();
+
         if (instructionalText == null) return;
 
         // Il corpo non taggato ("Muovi la testa per...") prende il colore base,
@@ -421,10 +452,10 @@ public class ManualAnchor : MonoBehaviour
         switch (currentStep)
         {
             case 0:
-                instructionalText.text = "<color=#FF5555><b>PUNTO 1</b></color>\n\nMuovi la testa per posizionare la pallina verde sullo sticker <color=#FF5555><b>ROSSO</b></color> (Estremo Sinistro) e fai pinch con la mano destra.";
+                instructionalText.text = "<color=#FF5555><b>PUNTO 1</b></color>\n\nMuovi la testa per posizionare la pallina rossa sullo sticker <color=#FF5555><b>ROSSO</b></color> (Estremo Sinistro) e fai pinch con la mano destra.";
                 break;
             case 1:
-                instructionalText.text = "<color=#5555FF><b>PUNTO 2</b></color>\n\nMuovi la testa per posizionare la pallina verde sullo sticker <color=#5555FF><b>BLU</b></color> (Estremo Destro) e fai pinch con la mano destra.";
+                instructionalText.text = "<color=#5555FF><b>PUNTO 2</b></color>\n\nMuovi la testa per posizionare la pallina blu sullo sticker <color=#5555FF><b>BLU</b></color> (Estremo Destro) e fai pinch con la mano destra.";
                 break;
             case 2:
                 // Verde e giallo scuriti: sul pannello bianco #55FF55 (1,33:1) e
@@ -442,7 +473,7 @@ public class ManualAnchor : MonoBehaviour
     {
         GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         marker.transform.position = posizione;
-        marker.transform.localScale = new Vector3(0.015f, 0.015f, 0.015f);
+        marker.transform.localScale = Vector3.one * DIAMETRO_SFERE;
 
         Destroy(marker.GetComponent<SphereCollider>());
 

@@ -87,6 +87,25 @@ public class PianoVisualizer : MonoBehaviour
     public Color verdeEtichettaTastoBianco = Color.green;
     public Color verdeEtichettaTastoNero = new Color(0.0f, 0.55f, 0.0f, 1f);
 
+    // Tasto da suonare colorato di verde (modalita' Seguimi), oltre alla colonna.
+    // L'origine del visualizzatore e' sulla parte nera dietro i tasti (dove stanno
+    // gli sticker e salgono le colonne): il tasto parte poco davanti e si allunga
+    // verso l'utente. Piu' fine del tasto vero, nel verde scuro della colonna.
+    // Se compare sul lato sbagliato (dietro, sulla parte nera) attivare
+    // "invertiDirezioneTasti"; altezza e lunghezze si regolano da qui.
+    [Header("Tasto Atteso (modalita' Seguimi)")]
+    public Color verdeTastoAtteso = new Color(0.0f, 0.55f, 0.19f, 0.6f);
+    public float larghezzaTastoBiancoAtteso = 0.012f;
+    public float larghezzaTastoNeroAtteso = 0.007f;
+    public float lunghezzaTastoBiancoAtteso = 0.14f;
+    public float lunghezzaTastoNeroAtteso = 0.085f;
+    [Tooltip("Spazio tra la parte nera (origine) e l'inizio del tasto verde")]
+    public float distanzaTastoAtteso = 0.005f;
+    [Tooltip("Altezza del tasto verde rispetto all'origine (negativa = piu' in basso)")]
+    public float altezzaTastoBiancoAtteso = 0f;
+    public float altezzaTastoNeroAtteso = 0f;
+    public bool invertiDirezioneTasti = false;
+
     [Header("Sagoma Colonna")]
     public float traslucenzaColonna = 0.5f;
 
@@ -254,8 +273,53 @@ public class PianoVisualizer : MonoBehaviour
 
             CreaEtichettaTesto(radiceGuida, ConvertiMidiInNomeNota(note), tastoNero ? verdeEtichettaTastoNero : verdeEtichettaTastoBianco);
 
+            CreaTastoAtteso(radiceGuida, note, tastoNero);
+
             expectedVisualObjects[note] = radiceGuida;
             expectedVisualList.Add(radiceGuida);
+        }
+    }
+
+    // Il tasto verde e' figlio della guida: sparisce con lei in PulisciNoteAtteseVisive.
+    private void CreaTastoAtteso(GameObject radiceGuida, int note, bool tastoNero)
+    {
+        GameObject tasto = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        tasto.name = "TastoAtteso";
+        tasto.transform.SetParent(radiceGuida.transform, false);
+        Destroy(tasto.GetComponent<BoxCollider>());
+
+        Material mat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+        mat.SetFloat("_Surface", 1);
+        mat.SetFloat("_Blend", 0);
+        mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        mat.SetInt("_ZWrite", 0);
+        mat.DisableKeyword("_ALPHATEST_ON");
+        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        mat.color = verdeTastoAtteso;
+        tasto.GetComponent<Renderer>().material = mat;
+
+        float larghezza = tastoNero ? larghezzaTastoNeroAtteso : larghezzaTastoBiancoAtteso;
+        float lunghezza = tastoNero ? lunghezzaTastoNeroAtteso : lunghezzaTastoBiancoAtteso;
+        float altezza = tastoNero ? altezzaTastoNeroAtteso : altezzaTastoBiancoAtteso;
+        // L'asse z del visualizzatore punta dalla parte dell'utente verso il fondo
+        // del pianoforte: i tasti stanno sulle z negative.
+        float verso = invertiDirezioneTasti ? 1f : -1f;
+
+        tasto.transform.localScale = new Vector3(larghezza, 0.002f, lunghezza);
+        tasto.transform.localPosition = new Vector3(0f, altezza, verso * (distanzaTastoAtteso + lunghezza * 0.5f));
+    }
+
+    // Seguimi: il tasto premuto perde il verde; se lo si rilascia prima di aver
+    // completato l'accordo, torna verde (va premuto di nuovo).
+    public void ImpostaTastoAttesoAcceso(int note, bool acceso)
+    {
+        foreach (GameObject guida in expectedVisualList)
+        {
+            if (guida == null || guida.name != $"Guida_Nota_{note}") continue;
+            Transform tasto = guida.transform.Find("TastoAtteso");
+            if (tasto != null) tasto.gameObject.SetActive(acceso);
         }
     }
 
@@ -805,6 +869,55 @@ public class PianoVisualizer : MonoBehaviour
         return (notaInOttava == 1 || notaInOttava == 3 || notaInOttava == 6 || notaInOttava == 8 || notaInOttava == 10);
     }
 
+    // Regolazione fine dopo l'ancoraggio, in unita' locali del visualizzatore:
+    // - spostamento a destra/sinistra di tutti i tasti virtuali;
+    // - fattore di larghezza, che allarga o stringe la tastiera attorno al Do1
+    //   (cosi' allineato il Do1 con lo spostamento, la larghezza muove il Do8
+    //   senza toccare il Do1).
+    private float spostamentoLaterale = 0f;
+    private float fattoreLarghezza = 1f;
+    public float SpostamentoLaterale => spostamentoLaterale;
+    public float FattoreLarghezza => fattoreLarghezza;
+
+    // Do1 (MIDI 24) e Do8 (MIDI 108): 2 e 51 tasti bianchi dopo il centro del La0.
+    public const float X_DO1 = 2 * LARGHEZZA_TASTO_BIANCO;
+    public const float DISTANZA_DO1_DO8 = 49 * LARGHEZZA_TASTO_BIANCO;
+
+    public void ImpostaSpostamentoLaterale(float valore)
+    {
+        ImpostaRegolazioneFine(valore, fattoreLarghezza);
+    }
+
+    public void ImpostaRegolazioneFine(float spostamento, float larghezza)
+    {
+        spostamentoLaterale = spostamento;
+        fattoreLarghezza = larghezza;
+        // Riposiziona subito quello che e' gia' a schermo: guide e colonne.
+        foreach (GameObject guida in expectedVisualList)
+        {
+            if (guida == null) continue;
+            if (int.TryParse(guida.name.Replace("Guida_Nota_", ""), out int nota))
+                guida.transform.localPosition = new Vector3(CalcolaX(nota), 0f, 0f);
+        }
+        foreach (var kvp in activeNotes)
+        {
+            if (kvp.Value.rootObject != null)
+                kvp.Value.rootObject.transform.localPosition = new Vector3(CalcolaX(kvp.Key), 0f, 0f);
+        }
+    }
+
+    // Tutti i Do (da Do1 a Do8) come guide (colonna + tasto verde): punti di
+    // riferimento per la regolazione fine dopo l'ancoraggio.
+    public void MostraTuttiIDo()
+    {
+        List<int> noteDo = new List<int>();
+        for (int n = NOTA_INIZIALE_MIDI; n <= NOTA_MAX_MIDI; n++)
+        {
+            if (n % 12 == 0) noteDo.Add(n);
+        }
+        MostraNoteAttese(noteDo.ToArray());
+    }
+
     private float CalcolaX(int n)
     {
         int rel = n - NOTA_INIZIALE_MIDI;
@@ -813,9 +926,30 @@ public class PianoVisualizer : MonoBehaviour
 
         if (IsTastoNero(n))
         {
-            x += (LARGHEZZA_TASTO_BIANCO / 2f);
+            // Il nero parte dal confine tra i due bianchi vicini, poi lo
+            // spostamento reale: sul pianoforte i neri non stanno a meta'.
+            x += (LARGHEZZA_TASTO_BIANCO / 2f) + SpostamentoTastoNero(n);
         }
-        return x;
+        // Regolazione fine: larghezza attorno al Do1, poi spostamento.
+        return X_DO1 + (x - X_DO1) * fattoreLarghezza + spostamentoLaterale;
+    }
+
+    // Distanza (m) del centro di un tasto nero dal confine tra i due bianchi
+    // vicini. Modello dei pianoforti: dietro, dove entrano nella meccanica, i 12
+    // tasti di un'ottava (164,5 mm) sono larghi uguali, 164,5 / 12 = 13,71 mm.
+    // Ne viene: Do# 2,9 mm a sinistra, Re# 1,0 a destra, Fa# 4,9 a sinistra,
+    // Sol# 1,0 a sinistra, La# 2,9 a destra.
+    private static float SpostamentoTastoNero(int n)
+    {
+        switch (n % 12)
+        {
+            case 1: return -0.00294f;  // Do#
+            case 3: return 0.00098f;   // Re#
+            case 6: return -0.00490f;  // Fa#
+            case 8: return -0.00098f;  // Sol#
+            case 10: return 0.00294f;  // La#
+            default: return 0f;
+        }
     }
 
     private string ConvertiMidiInNomeNota(int n)

@@ -210,7 +210,8 @@ public class BarraTempoOsservatore : MonoBehaviour
         return label;
     }
 
-    private static SliderTempo CreaSlider(Transform parent, float marginiLati, float altezzaArea)
+    // Usato anche dalla regolazione fine dell'ancoraggio (ManualAnchor).
+    internal static SliderTempo CreaSlider(Transform parent, float marginiLati, float altezzaArea)
     {
         Sprite arrotondato = GameManager.SpriteArrotondato;
 

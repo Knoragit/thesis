@@ -2283,6 +2283,12 @@ public class GameManager : MonoBehaviour
         ControllaNoteSeguimi();
     }
 
+    private void ImpostaTastoAtteso(int nota, bool acceso)
+    {
+        PianoVisualizer visualizer = FindFirstObjectByType<PianoVisualizer>();
+        if (visualizer != null) visualizer.ImpostaTastoAttesoAcceso(nota, acceso);
+    }
+
     private void ControllaNoteSeguimi()
     {
         if (expectedNotes.Count == 0) return;
@@ -2315,12 +2321,17 @@ public class GameManager : MonoBehaviour
             {
                 // Un doppio note_on di un tasto gia' giu' non e' una nuova pressione.
                 if (userPressedNotes.Add(nota)) notePremuteDopoAttesa.Add(nota);
+                // Il tasto verde si spegne appena premuto (prima del controllo, che
+                // a accordo completo svuota expectedNotes).
+                if (expectedNotes.Contains(nota)) ImpostaTastoAtteso(nota, false);
                 ControllaNoteSeguimi();
             }
             else if (action == "release")
             {
                 userPressedNotes.Remove(nota);
                 notePremuteDopoAttesa.Remove(nota);
+                // Rilasciato prima di finire l'accordo: va ripremuto, torna verde.
+                if (expectedNotes.Contains(nota)) ImpostaTastoAtteso(nota, true);
             }
             return;
         }

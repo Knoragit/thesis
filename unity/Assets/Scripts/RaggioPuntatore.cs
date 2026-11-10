@@ -61,7 +61,10 @@ public class RaggioPuntatore : MonoBehaviour
 
     void LateUpdate()
     {
-        if (gameManager != null && gameManager.statoAttuale == GameManager.AppState.Onboarding)
+        // In Onboarding il laser e' spento, tranne nella regolazione fine dopo le
+        // 3 sfere, dove serve per slider e bottoni.
+        if (gameManager != null && gameManager.statoAttuale == GameManager.AppState.Onboarding
+            && !ManualAnchor.RegolazioneInCorso)
         {
             Nascondi(true, "[RAGGIO] Onboarding: laser nascosto");
             return;

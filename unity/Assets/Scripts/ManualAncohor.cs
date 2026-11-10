@@ -46,8 +46,15 @@ public class ManualAnchor : MonoBehaviour
     private float lastPinchTime = 0f;
     private bool diagnosticStampato = false;
 
-    // Distanza teorica in metri tra il tasto più a sinistra e quello più a destra (1.1985m su 88 tasti)
-    private const float LARGHEZZA_TEORICA_TASTIERA = 1.1985f;
+    // Gli sticker rosso e blu stanno accanto agli spigoli ESTERNI del primo (La0) e
+    // dell'ultimo tasto (Do8): tra loro c'e' tutta la tastiera, 52 tasti bianchi
+    // da 23,5 mm = 1,222 m. Prima si usava 1,1985 m (51 tasti: dal centro del La0
+    // al centro del Do8), che con gli sticker sui bordi stringeva tutto del 2% e
+    // spostava le note di mezzo tasto: l'errore cresceva andando verso destra,
+    // fino a quasi 2,5 cm sul Do8.
+    private const float LARGHEZZA_TASTO_BIANCO = 0.0235f;
+    private const int TASTI_BIANCHI = 52;
+    private const float LARGHEZZA_TEORICA_TASTIERA = TASTI_BIANCHI * LARGHEZZA_TASTO_BIANCO;
 
     void Start()
     {
@@ -132,14 +139,86 @@ public class ManualAnchor : MonoBehaviour
         // Se abbiamo completato la calibrazione, non facciamo più nulla
         if (currentStep >= 3 || guideSphere == null) return;
 
-        // Proietta la sfera guida davanti all'utente per permettergli di mirare agli sticker
-        Vector3 targetPos = mainCameraTransform.position + mainCameraTransform.forward * 0.6f + Vector3.down * 0.2f;
-        guideSphere.transform.position = Vector3.Lerp(guideSphere.transform.position, targetPos, Time.deltaTime * 8f);
+        // La sfera guida sta tra pollice e indice della mano destra: si appoggiano
+        // le dita sullo sticker e il punto preso e' proprio li'. Prima seguiva lo
+        // sguardo a 60 cm dalla testa: il punto finiva sulla linea occhi-sticker ma
+        // piu' vicino all'utente, e la tastiera virtuale usciva piu' stretta del vero.
+        if (PuntoTraLeDita(out Vector3 dita))
+        {
+            guideSphere.transform.position = dita;
+        }
+        else
+        {
+            // Riserva, se il tracciamento delle dita non c'e': la vecchia mira con lo sguardo.
+            Vector3 targetPos = mainCameraTransform.position + mainCameraTransform.forward * 0.6f + Vector3.down * 0.2f;
+            guideSphere.transform.position = Vector3.Lerp(guideSphere.transform.position, targetPos, Time.deltaTime * 8f);
+        }
 
         // Orienta la sfera guida in base allo sguardo dell'utente (annullando l'inclinazione verticale)
         Vector3 forwardSguardo = mainCameraTransform.forward;
         forwardSguardo.y = 0;
         if (forwardSguardo != Vector3.zero) guideSphere.transform.rotation = Quaternion.LookRotation(forwardSguardo);
+    }
+
+    // Distanza (m) della pallina guida davanti alla punta delle dita.
+    private const float DISTANZA_PALLINA_DALLE_DITA = 0.03f;
+
+    // Scheletri delle mani (cache rinfrescata ogni mezzo secondo).
+    private OVRSkeleton[] scheletri = new OVRSkeleton[0];
+    private float prossimoRinfrescoScheletri = 0f;
+    private bool avvisoDitaStampato = false;
+
+    // Punto medio tra la punta del pollice e quella dell'indice della mano destra.
+    private bool PuntoTraLeDita(out Vector3 punto)
+    {
+        punto = Vector3.zero;
+        if (Time.time >= prossimoRinfrescoScheletri)
+        {
+            prossimoRinfrescoScheletri = Time.time + 0.5f;
+            scheletri = FindObjectsByType<OVRSkeleton>(FindObjectsSortMode.None);
+        }
+
+        foreach (OVRSkeleton s in scheletri)
+        {
+            if (s == null || !s.isActiveAndEnabled || !s.IsInitialized || !s.IsDataValid) continue;
+            OVRSkeleton.SkeletonType tipo = s.GetSkeletonType();
+            bool openXR = tipo == OVRSkeleton.SkeletonType.XRHandRight;
+            if (!openXR && tipo != OVRSkeleton.SkeletonType.HandRight) continue;
+
+            // I due tipi di scheletro numerano le ossa in modo diverso.
+            OVRSkeleton.BoneId idPollice = openXR ? OVRSkeleton.BoneId.XRHand_ThumbTip : OVRSkeleton.BoneId.Hand_ThumbTip;
+            OVRSkeleton.BoneId idIndice = openXR ? OVRSkeleton.BoneId.XRHand_IndexTip : OVRSkeleton.BoneId.Hand_IndexTip;
+            OVRSkeleton.BoneId idPolso = openXR ? OVRSkeleton.BoneId.XRHand_Wrist : OVRSkeleton.BoneId.Hand_WristRoot;
+            Transform pollice = null, indice = null, polso = null;
+            if (s.Bones == null) continue;
+            foreach (OVRBone osso in s.Bones)
+            {
+                if (osso == null || osso.Transform == null) continue;
+                if (osso.Id == idPollice) pollice = osso.Transform;
+                else if (osso.Id == idIndice) indice = osso.Transform;
+                else if (osso.Id == idPolso) polso = osso.Transform;
+            }
+            if (pollice == null || indice == null) continue;
+
+            punto = (pollice.position + indice.position) * 0.5f;
+            // La pallina sta un po' davanti alle dita, nella direzione in cui
+            // puntano (dal polso verso le punte), come la punta di una penna:
+            // e' lei che va sullo sticker e le dita restano comode, piu' indietro.
+            if (polso != null)
+            {
+                Vector3 direzione = punto - polso.position;
+                if (direzione.sqrMagnitude > 0.0001f)
+                    punto += direzione.normalized * DISTANZA_PALLINA_DALLE_DITA;
+            }
+            return true;
+        }
+
+        if (!avvisoDitaStampato)
+        {
+            avvisoDitaStampato = true;
+            Debug.LogWarning("[CALIBRAZIONE] Dita della mano destra non tracciate: la sfera guida segue lo sguardo.");
+        }
+        return false;
     }
 
     public void OnPinchDetected()
@@ -206,15 +285,22 @@ public class ManualAnchor : MonoBehaviour
         // --- 2. SPOSTAMENTO IN PROFONDITÀ ---
         float profonditaPunto3 = Vector3.Dot(p3 - p1, forwardDir);
         Vector3 posizioneArretrata = p1 + (forwardDir * profonditaPunto3);
+        // Anche l'altezza e' quella del punto 3 (Do centrale), non del punto 1:
+        // colonne e tasto verde partono all'altezza dello sticker verde.
+        posizioneArretrata.y = p3.y;
 
-        // --- 3. POSIZIONAMENTO E ROTAZIONE SQUADRATA ---
-        pianoVisualizer.transform.position = posizioneArretrata;
-        pianoVisualizer.transform.rotation = Quaternion.LookRotation(forwardDir, upDir);
-
-        // --- 4. CALCOLO DELLA SCALA DINAMICA ---
-        float larghezzaRealeRilevata = Vector3.Distance(p1, p2);
+        // --- 3. CALCOLO DELLA SCALA DINAMICA ---
+        // Larghezza misurata in orizzontale, lungo la tastiera: un dislivello tra i
+        // due sticker non deve allargarla.
+        float larghezzaRealeRilevata = Vector3.Dot(p2 - p1, rightDir);
         float fattoreScala = larghezzaRealeRilevata / LARGHEZZA_TEORICA_TASTIERA;
 
+        // --- 4. POSIZIONAMENTO E ROTAZIONE SQUADRATA ---
+        // Lo sticker rosso e' sul bordo esterno del La0, ma l'origine del
+        // visualizzatore (x = 0) e' il CENTRO del La0: mezzo tasto piu' a destra.
+        pianoVisualizer.transform.position = posizioneArretrata
+            + rightDir * (LARGHEZZA_TASTO_BIANCO * 0.5f * fattoreScala);
+        pianoVisualizer.transform.rotation = Quaternion.LookRotation(forwardDir, upDir);
         pianoVisualizer.transform.localScale = new Vector3(fattoreScala, fattoreScala, fattoreScala);
 
         // --- 5. AUTOMATISMO CANVAS (CORRETTO) ---
@@ -249,11 +335,222 @@ public class ManualAnchor : MonoBehaviour
 
         Debug.Log($"[OK] Calibrazione Livellata 3 Punti completata! Scala: {fattoreScala:F2}x");
 
-        GameManager gm = FindFirstObjectByType<GameManager>();
-        if (gm != null)
+        // Prima del menu, la regolazione fine a mano (destra/sinistra).
+        AvviaRegolazioneFine();
+    }
+
+    // ---------------------------------------------------------------
+    // REGOLAZIONE FINE (dopo le 3 sfere)
+    // ---------------------------------------------------------------
+    // Le 3 sfere lasciano spesso i tasti virtuali un po' fuori posto. Qui si vedono
+    // tutti i Do in verde (colonne e tasti) e si sistemano a mano in due passi:
+    //   1) POSIZIONE: sposta tutti i tasti a destra/sinistra finche' il Do1 cade
+    //      sul suo tasto;
+    //   2) LARGHEZZA: allarga o stringe la tastiera attorno al Do1 finche' anche
+    //      il Do8 cade sul suo tasto (il Do1 non si muove).
+    // Serve la larghezza perche' un errore di scala (sticker qualche mm fuori
+    // dagli spigoli dei tasti) cresce lungo la tastiera e lo spostamento da solo
+    // non lo corregge. "Conferma" porta al menu.
+    private const float REGOLAZIONE_MAX_MM = 30f;
+    private const float PASSO_BOTTONI_MM = 0.5f;
+
+    // Letto da RaggioPuntatore: in Onboarding il laser serve solo qui.
+    public static bool RegolazioneInCorso { get; private set; }
+
+    private GameObject pannelloRegolazione;
+    private SliderTempo sliderPosizione;
+    private SliderTempo sliderLarghezza;
+    private TextMeshProUGUI testoPosizione;
+    private TextMeshProUGUI testoLarghezza;
+    // Posizione: mm di spostamento. Larghezza: mm di cui si sposta il Do8.
+    private float posizioneMm = 0f;
+    private float larghezzaMm = 0f;
+
+    private static readonly System.Globalization.CultureInfo Italiano = System.Globalization.CultureInfo.GetCultureInfo("it-IT");
+
+    private void AvviaRegolazioneFine()
+    {
+        ChiudiRegolazioneFine();
+        RegolazioneInCorso = true;
+        posizioneMm = 0f;
+        larghezzaMm = 0f;
+        pianoVisualizer.ImpostaRegolazioneFine(0f, 1f);
+        pianoVisualizer.MostraTuttiIDo();
+        CreaPannelloRegolazione();
+        ApplicaRegolazione();
+
+        RaggioPuntatore raggio = FindFirstObjectByType<RaggioPuntatore>();
+        if (raggio != null) raggio.RinfrescaOra();
+        Debug.Log("[CALIBRAZIONE] Regolazione fine: sposta i tasti virtuali e conferma.");
+    }
+
+    private void ImpostaPosizione(float mm)
+    {
+        posizioneMm = Mathf.Clamp(mm, -REGOLAZIONE_MAX_MM, REGOLAZIONE_MAX_MM);
+        ApplicaRegolazione();
+    }
+
+    private void ImpostaLarghezza(float mm)
+    {
+        larghezzaMm = Mathf.Clamp(mm, -REGOLAZIONE_MAX_MM, REGOLAZIONE_MAX_MM);
+        ApplicaRegolazione();
+    }
+
+    // Millimetri reali -> unita' locali del visualizzatore (che e' scalato).
+    private void ApplicaRegolazione()
+    {
+        float scala = Mathf.Max(0.0001f, pianoVisualizer.transform.lossyScale.x);
+        float spostamento = posizioneMm / 1000f / scala;
+        float fattore = 1f + (larghezzaMm / 1000f / scala) / PianoVisualizer.DISTANZA_DO1_DO8;
+        pianoVisualizer.ImpostaRegolazioneFine(spostamento, fattore);
+
+        if (sliderPosizione != null) sliderPosizione.SetValueWithoutNotify(posizioneMm);
+        if (sliderLarghezza != null) sliderLarghezza.SetValueWithoutNotify(larghezzaMm);
+        if (testoPosizione != null)
+            testoPosizione.text = "<b>1) Posizione</b>: allinea il Do1   " + FormattaMm(posizioneMm);
+        if (testoLarghezza != null)
+            testoLarghezza.text = "<b>2) Larghezza</b>: allinea il Do8   " + FormattaMm(larghezzaMm);
+    }
+
+    private static string FormattaMm(float mm)
+    {
+        return (mm >= 0f ? "+" : "") + mm.ToString("0.0", Italiano) + " mm";
+    }
+
+    private void ConfermaRegolazione()
+    {
+        Debug.Log($"[CALIBRAZIONE] Regolazione confermata: posizione {posizioneMm:F1} mm, larghezza {larghezzaMm:F1} mm al Do8");
+        ChiudiRegolazioneFine();
+        StartCoroutine(AttivaMenuDopoCalibrazione());
+    }
+
+    // Toglie pannello e note verdi; la regolazione scelta resta applicata.
+    private void ChiudiRegolazioneFine()
+    {
+        RegolazioneInCorso = false;
+        if (pannelloRegolazione != null) Destroy(pannelloRegolazione);
+        pannelloRegolazione = null;
+        sliderPosizione = null;
+        sliderLarghezza = null;
+        testoPosizione = null;
+        testoLarghezza = null;
+        if (pianoVisualizer != null) pianoVisualizer.PulisciNoteAtteseVisive();
+    }
+
+    private void CreaPannelloRegolazione()
+    {
+        if (canvasTransform == null) return;
+
+        GameObject p = new GameObject("PannelloRegolazioneFine", typeof(RectTransform), typeof(Image));
+        p.transform.SetParent(canvasTransform, false);
+        RectTransform rt = (RectTransform)p.transform;
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(900f, 560f);
+        ApplicaStilePannello(p.GetComponent<Image>());
+        pannelloRegolazione = p;
+
+        TextMeshProUGUI titolo = CreaTestoRegolazione(rt, "Titolo", new Vector2(0f, 220f), new Vector2(840f, 90f), 26f);
+        titolo.text = "<b>REGOLAZIONE FINE</b>\nPrima allinea il Do1, poi il Do8 sui tasti veri";
+        titolo.color = GameManager.SteelBlue;
+
+        testoPosizione = CreaTestoRegolazione(rt, "TestoPosizione", new Vector2(0f, 140f), new Vector2(840f, 50f), 26f);
+        testoPosizione.color = Color.black;
+        sliderPosizione = CreaRigaSlider(rt, 80f, ImpostaPosizione, () => posizioneMm);
+
+        testoLarghezza = CreaTestoRegolazione(rt, "TestoLarghezza", new Vector2(0f, 0f), new Vector2(840f, 50f), 26f);
+        testoLarghezza.color = Color.black;
+        sliderLarghezza = CreaRigaSlider(rt, -60f, ImpostaLarghezza, () => larghezzaMm);
+
+        CreaBottoneRegolazione(rt, "Conferma", new Vector2(0f, -200f), new Vector2(300f, 80f), ConfermaRegolazione);
+    }
+
+    // Una riga: bottone "<", slider di precisione, bottone ">" (passi da 0,5 mm).
+    private SliderTempo CreaRigaSlider(RectTransform parent, float y, System.Action<float> imposta, System.Func<float> valore)
+    {
+        GameObject area = new GameObject("AreaSlider", typeof(RectTransform));
+        area.transform.SetParent(parent, false);
+        RectTransform art = (RectTransform)area.transform;
+        art.anchorMin = new Vector2(0.5f, 0.5f);
+        art.anchorMax = new Vector2(0.5f, 0.5f);
+        art.pivot = new Vector2(0.5f, 0.5f);
+        art.anchoredPosition = new Vector2(0f, y);
+        art.sizeDelta = new Vector2(560f, 80f);
+
+        // La funzione della barra del tempo stende lo slider su tutta la larghezza
+        // del genitore, meno i margini.
+        SliderTempo slider = BarraTempoOsservatore.CreaSlider(art, 10f, 80f);
+        slider.minValue = -REGOLAZIONE_MAX_MM;
+        slider.maxValue = REGOLAZIONE_MAX_MM;
+        slider.SetValueWithoutNotify(0f);
+        // I valori sono attorno allo zero: niente riempimento da sinistra.
+        if (slider.fillRect != null)
+            slider.fillRect.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0f);
+        slider.onValueChanged.AddListener(v => imposta(v));
+
+        string passo = PASSO_BOTTONI_MM.ToString("0.0", Italiano);
+        CreaBottoneRegolazione(parent, "< " + passo, new Vector2(-365f, y), new Vector2(130f, 70f),
+            () => imposta(valore() - PASSO_BOTTONI_MM));
+        CreaBottoneRegolazione(parent, passo + " >", new Vector2(365f, y), new Vector2(130f, 70f),
+            () => imposta(valore() + PASSO_BOTTONI_MM));
+        return slider;
+    }
+
+    private TextMeshProUGUI CreaTestoRegolazione(RectTransform parent, string nome, Vector2 posizione, Vector2 dimensione, float fontSize)
+    {
+        GameObject go = new GameObject(nome, typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+        RectTransform rt = (RectTransform)go.transform;
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = posizione;
+        rt.sizeDelta = dimensione;
+        TextMeshProUGUI testo = go.AddComponent<TextMeshProUGUI>();
+        if (GameManager.FontApp != null) testo.font = GameManager.FontApp;
+        testo.fontSize = fontSize;
+        testo.alignment = TextAlignmentOptions.Center;
+        testo.raycastTarget = false;
+        return testo;
+    }
+
+    // Bottone Tan con hover e pressione Dusty Rose, come gli altri bottoni dell'app.
+    private void CreaBottoneRegolazione(RectTransform parent, string etichetta, Vector2 posizione, Vector2 dimensione, UnityEngine.Events.UnityAction azione)
+    {
+        GameObject go = new GameObject("Bottone " + etichetta, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+        RectTransform rt = (RectTransform)go.transform;
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = posizione;
+        rt.sizeDelta = dimensione;
+
+        Image img = go.GetComponent<Image>();
+        img.color = GameManager.TanColor;
+        if (GameManager.SpriteArrotondato != null)
         {
-            StartCoroutine(AttivaMenuDopoCalibrazione());
+            img.sprite = GameManager.SpriteArrotondato;
+            img.type = Image.Type.Sliced;
         }
+        GameManager.ApplicaPenombra(go);
+
+        Button btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+        ColorBlock colori = btn.colors;
+        colori.normalColor = Color.white;
+        colori.highlightedColor = GameManager.DustyRose;
+        colori.selectedColor = Color.white;
+        colori.pressedColor = GameManager.DustyRose;
+        btn.colors = colori;
+        btn.navigation = new Navigation { mode = Navigation.Mode.None };
+        btn.onClick.AddListener(azione);
+
+        TextMeshProUGUI testo = CreaTestoRegolazione(rt, "Testo", Vector2.zero, dimensione, 28f);
+        testo.text = "<b>" + etichetta + "</b>";
+        testo.color = Color.black;
     }
 
     private GameObject messaggioAncoraggio;
@@ -392,6 +689,11 @@ public class ManualAnchor : MonoBehaviour
         lastPinchTime = Time.time;
         PulisciMarkers();
 
+        // Nuova calibrazione: via la regolazione fine in corso e lo spostamento
+        // a mano della calibrazione precedente.
+        ChiudiRegolazioneFine();
+        if (pianoVisualizer != null) pianoVisualizer.ImpostaRegolazioneFine(0f, 1f);
+
         // --- RIPRISTINO CANVAS ALLO STATO INIZIALE ---
         if (canvasTransform != null && originalCanvasParent != null)
         {
@@ -452,16 +754,16 @@ public class ManualAnchor : MonoBehaviour
         switch (currentStep)
         {
             case 0:
-                instructionalText.text = "<color=#FF5555><b>PUNTO 1</b></color>\n\nMuovi la testa per posizionare la pallina rossa sullo sticker <color=#FF5555><b>ROSSO</b></color> (Estremo Sinistro) e fai pinch con la mano destra.";
+                instructionalText.text = "<color=#FF5555><b>PUNTO 1</b></color>\n\nPorta la pallina che sta davanti alle dita della mano destra sullo sticker <color=#FF5555><b>ROSSO</b></color> (Estremo Sinistro) e fai pinch.";
                 break;
             case 1:
-                instructionalText.text = "<color=#5555FF><b>PUNTO 2</b></color>\n\nMuovi la testa per posizionare la pallina blu sullo sticker <color=#5555FF><b>BLU</b></color> (Estremo Destro) e fai pinch con la mano destra.";
+                instructionalText.text = "<color=#5555FF><b>PUNTO 2</b></color>\n\nPorta la pallina che sta davanti alle dita della mano destra sullo sticker <color=#5555FF><b>BLU</b></color> (Estremo Destro) e fai pinch.";
                 break;
             case 2:
                 // Verde e giallo scuriti: sul pannello bianco #55FF55 (1,33:1) e
                 // #FFFF55 (1,07:1) non si vedevano piu'. Rosso e blu reggono
                 // cosi' come sono (3,14:1 e 5,09:1) e non li ho toccati.
-                instructionalText.text = "<color=#2A802A><b>PUNTO 3</b></color>\n\nMuovi la testa per posizionare la pallina verde sullo sticker <color=#2A802A><b>VERDE</b></color> (Do Centrale) e fai pinch con la mano destra.";
+                instructionalText.text = "<color=#2A802A><b>PUNTO 3</b></color>\n\nPorta la pallina che sta davanti alle dita della mano destra sullo sticker <color=#2A802A><b>VERDE</b></color> (Do Centrale) e fai pinch.";
                 break;
             case 3:
                 instructionalText.text = "<color=#80802A><b>CALIBRAZIONE COMPLETATA!</b></color>";

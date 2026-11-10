@@ -46,7 +46,9 @@ public class SongListManager : MonoBehaviour
     private float altezzaScorrRicerca = 300f;
     private Vector2 posOrigRicerca = Vector2.zero;
     private float indietroLocXOrig = -150f;
-    private const float LARGHEZZA_RICERCA = 250f;
+    // Tastiera di ricerca compatta, 10 tasti per riga: tasti da ~28 x 30 unita'
+    // ((340 - 8 di bordi - 9 x 6 di spaziature) / 10).
+    private const float LARGHEZZA_RICERCA = 340f;
 
     // Firme (id in ordine) dell'ultima lista renderizzata: servono a saltare la
     // ricostruzione quando il contenuto non cambia (anti-sfarfallio).
@@ -1529,7 +1531,8 @@ public class SongListManager : MonoBehaviour
 
         // Partecipa al layout del contenitore: si posiziona in fondo, sotto l'elenco.
         LayoutElement le = tastiera.AddComponent<LayoutElement>();
-        le.preferredHeight = 306f;
+        // Readout (32) + 3 righe di tasti (3 x 30) + 3 spaziature (3 x 8) + bordi (8).
+        le.preferredHeight = 154f;
 
         Image sfondo = tastiera.AddComponent<Image>();
         sfondo.sprite = pannelloSpr;
@@ -1538,7 +1541,7 @@ public class SongListManager : MonoBehaviour
 
         VerticalLayoutGroup vlg = tastiera.AddComponent<VerticalLayoutGroup>();
         vlg.padding = new RectOffset(4, 4, 4, 4);
-        vlg.spacing = 10f;
+        vlg.spacing = 8f;
         vlg.childControlWidth = true;
         vlg.childControlHeight = true;
         vlg.childForceExpandWidth = true;
@@ -1548,7 +1551,7 @@ public class SongListManager : MonoBehaviour
         // Schermo readout: mostra live il testo digitato sulla tastiera.
         GameObject readGO = CrearGOFiglio(tastiera.transform, "Readout");
         LayoutElement leRead = readGO.AddComponent<LayoutElement>();
-        leRead.preferredHeight = 38f;
+        leRead.preferredHeight = 32f;
 
         // Maschera: il testo non puo' mai uscire dai bordi del readout.
         readGO.AddComponent<RectMask2D>();
@@ -1566,7 +1569,7 @@ public class SongListManager : MonoBehaviour
         rtReadLabel.offsetMax = new Vector2(-8f, -2f);
         TextMeshProUGUI readLabel = readLabelGO.AddComponent<TextMeshProUGUI>();
         readLabel.font = fontAsset;
-        readLabel.fontSize = 20;
+        readLabel.fontSize = 18;
         // Il readout e' l'unico pezzo di testo sul pannello Steel Blue: bianco.
         readLabel.color = GameManager.TestoChiaro;
         readLabel.alignment = TextAlignmentOptions.Left;
@@ -1580,11 +1583,10 @@ public class SongListManager : MonoBehaviour
             readLabel.text = string.IsNullOrEmpty(v) ? "Scrivi il brano" : "> " + v;
         });
 
-        CreaRigaTastiera(tastiera.transform, input, 42f, "A", "B", "C", "D", "E", "F");
-        CreaRigaTastiera(tastiera.transform, input, 42f, "G", "H", "I", "J", "K", "L");
-        CreaRigaTastiera(tastiera.transform, input, 42f, "M", "N", "O", "P", "Q", "R");
-        CreaRigaTastiera(tastiera.transform, input, 42f, "S", "T", "U", "V", "W", "X");
-        CreaRigaTastiera(tastiera.transform, input, 42f, "Y", "Z", "SP", "DEL", "AC", "BACK");
+        // Tre righe da dieci tasti: piu' bassa e piu' larga verso destra.
+        CreaRigaTastiera(tastiera.transform, input, 30f, "A", "B", "C", "D", "E", "F", "G", "H", "I", "J");
+        CreaRigaTastiera(tastiera.transform, input, 30f, "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T");
+        CreaRigaTastiera(tastiera.transform, input, 30f, "U", "V", "W", "X", "Y", "Z", "SP", "DEL", "AC", "BACK");
 
         return tastiera;
     }
@@ -1605,7 +1607,7 @@ public class SongListManager : MonoBehaviour
         LayoutElement leRiga = riga.AddComponent<LayoutElement>();
         leRiga.preferredHeight = altezza;
 
-        // Ogni riga ha lo stesso numero di tasti (6): tutti con la stessa
+        // Ogni riga ha lo stesso numero di tasti (10): tutti con la stessa
         // flessibilita', così ogni casella ha la stessa dimensione e riempie la riga.
         foreach (string t in tasti)
         {
@@ -1642,9 +1644,10 @@ img.color = GameManager.TanColor;
             TextMeshProUGUI lab = labGO.AddComponent<TextMeshProUGUI>();
             lab.text = tasto;
             lab.font = fontAsset;
-            lab.fontSize = 20f;
-            lab.fontSizeMin = 12f;
-            lab.fontSizeMax = 20f;
+            // Tasti piu' piccoli: "BACK" e "DEL" devono poter scendere sotto 12.
+            lab.fontSize = 16f;
+            lab.fontSizeMin = 8f;
+            lab.fontSizeMax = 16f;
             lab.enableAutoSizing = true;
             lab.color = Color.black;
             lab.alignment = TextAlignmentOptions.Center;

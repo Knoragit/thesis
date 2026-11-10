@@ -40,6 +40,12 @@ pub struct Config {
     #[arg(long, env = "MIDI_BRIDGE_MIDI_OUT")]
     pub midi_out: Option<String>,
 
+    /// Logs every note the keyboard sends and the piano receives, with the seconds since
+    /// start-up, to a new file in this folder, to turn into an audio track for a demo video.
+    /// Off by default.
+    #[arg(long, env = "MIDI_BRIDGE_MIDI_LOG_DIR")]
+    pub midi_log_dir: Option<PathBuf>,
+
     /// Where commands from Unity arrive.
     #[arg(long, env = "MIDI_BRIDGE_UDP_LISTEN", default_value = "127.0.0.1:5006")]
     pub udp_listen: SocketAddr,

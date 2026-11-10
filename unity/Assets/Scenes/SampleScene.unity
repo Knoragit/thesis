@@ -1737,7 +1737,9 @@ MonoBehaviour:
   visualizer: {fileID: 929642984}
   port: 5005
   bridgeExecutable: ../bridge/target/release/midi-bridge.exe
-  bridgeArguments: '--data-dir "C:/Users/vrlab/Desktop/Nora" --db-file nora_database.db --report-name Report_Completo_Nora.pdf --songs-subdir Canzoni --sessions-subdir Sessioni'
+  bridgeArguments: --data-dir "C:/Users/vrlab/Desktop/Nora" --db-file nora_database.db
+    --report-name Report_Completo_Nora.pdf --songs-subdir Canzoni --sessions-subdir
+    Sessioni --midi-log-dir "C:/Users/vrlab/Desktop/Nora/Demo"
 --- !u!4 &404522081
 Transform:
   m_ObjectHideFlags: 0

@@ -120,11 +120,15 @@ impl MidiSink for MidiOutputConnection {
     }
 }
 
+/// Called with every message sent to the piano.
+pub type Tap = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
 /// The piano: a cheaply cloneable handle shared by playback and demo threads.
 /// Without an output port, sending does nothing.
 #[derive(Clone)]
 pub struct MidiOut {
     sink: Option<Arc<Mutex<Box<dyn MidiSink>>>>,
+    tap: Option<Tap>,
     pub name: Option<String>,
 }
 
@@ -141,6 +145,7 @@ impl MidiOut {
     pub fn disconnected() -> Self {
         Self {
             sink: None,
+            tap: None,
             name: None,
         }
     }
@@ -149,7 +154,17 @@ impl MidiOut {
     pub fn from_sink(name: &str, sink: impl MidiSink + 'static) -> Self {
         Self {
             sink: Some(Arc::new(Mutex::new(Box::new(sink)))),
+            tap: None,
             name: Some(name.to_owned()),
+        }
+    }
+
+    /// The same piano, also showing every message sent to it to `tap`.
+    #[must_use]
+    pub fn with_tap(self, tap: Tap) -> Self {
+        Self {
+            tap: Some(tap),
+            ..self
         }
     }
 
@@ -168,6 +183,9 @@ impl MidiOut {
     }
 
     pub fn send(&self, message: &Message) {
+        if let Some(tap) = &self.tap {
+            tap(message.as_bytes());
+        }
         if let Some(sink) = &self.sink {
             sink.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

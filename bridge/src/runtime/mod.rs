@@ -2,6 +2,7 @@
 //! threads and subprocesses. The decisions are made by [`crate::core`].
 
 mod examples;
+mod midi_log;
 mod playback;
 mod python;
 mod report;
@@ -10,7 +11,7 @@ mod search;
 mod services;
 mod udp;
 
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use anyhow::Context;
 
@@ -22,6 +23,7 @@ use crate::midi::ports::{self, MidiOut};
 use crate::protocol::Event;
 
 use examples::ExampleSlot;
+use midi_log::MidiLog;
 use playback::PlaybackSlot;
 use python::PythonTools;
 use services::{Clock, Services, UnitySender, Wake};
@@ -38,9 +40,25 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
         .context("cannot scan the songs folder")?;
 
     let clock = Clock::start();
+    let midi_log = config.midi_log_dir.as_deref().and_then(|folder| {
+        match MidiLog::create(folder, clock) {
+            Ok(log) => {
+                tracing::info!(file = %log.path.display(), "logging the MIDI notes");
+                Some(log)
+            }
+            Err(error) => {
+                tracing::warn!(%error, folder = %folder.display(), "cannot create the MIDI log");
+                None
+            }
+        }
+    });
     let (wakes, inbox) = mpsc::channel();
     let unity = UnitySender::new(config.udp_unity).context("cannot create the Unity socket")?;
-    let piano = open_piano(config);
+    let mut piano = open_piano(config);
+    if let Some(log) = &midi_log {
+        let log = log.clone();
+        piano = piano.with_tap(Arc::new(move |bytes: &[u8]| log.record("out", bytes)));
+    }
     let services = Services {
         unity,
         piano,
@@ -54,7 +72,7 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
             config.udp_listen.port()
         )
     })?;
-    let _keyboard = open_keyboard(config, &services);
+    let _keyboard = open_keyboard(config, &services, midi_log);
     udp::spawn_receiver(commands, services.wakes.clone(), clock);
     tracing::info!(listen = %config.udp_listen, unity = %config.udp_unity, "bridge ready");
     // Unity waits for this before sending commands; it also asks again with pings.
@@ -93,9 +111,16 @@ fn open_piano(config: &Config) -> MidiOut {
 }
 
 /// Connects the keyboard. The returned handle must stay alive, or the connection closes.
-fn open_keyboard(config: &Config, services: &Services) -> Option<ports::InputPort> {
+fn open_keyboard(
+    config: &Config,
+    services: &Services,
+    midi_log: Option<Arc<MidiLog>>,
+) -> Option<ports::InputPort> {
     let (wakes, clock) = (services.wakes.clone(), services.clock);
     let on_message = move |bytes: &[u8]| {
+        if let Some(log) = &midi_log {
+            log.record("in", bytes);
+        }
         if let Some(note) = Message::from_bytes(bytes.to_vec()).note() {
             let _ = wakes.send(Wake {
                 input: Input::Note(note),
